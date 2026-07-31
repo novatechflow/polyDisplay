@@ -84,9 +84,13 @@
     color:var(--text);font-size:15px;font-weight:600;cursor:pointer;}
   .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
   .muted{color:var(--muted);font-size:12px;}
+  #pullHint{position:fixed;top:0;left:0;right:0;height:0;overflow:hidden;z-index:20;
+    display:flex;align-items:center;justify-content:center;background:var(--panel2);
+    color:var(--muted);font-size:14px;font-weight:600;opacity:0;transition:opacity .12s;}
 </style>
 </head>
 <body>
+<div id="pullHint">&#8595; pull to reload</div>
 <div id="app">
   <header>
     <div class="brand">poly<span>Display</span></div>
@@ -109,7 +113,7 @@
       <div class="list" id="cxList"><div class="empty">Connecting to server&hellip;</div></div>
     </div>
   </main>
-  <footer><span id="footL">polyDisplay</span><span id="appVer">v3 &middot; server</span></footer>
+  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v4 &middot; server</span></footer>
 </div>
 
 <div class="modal" id="modal">
@@ -278,6 +282,36 @@ $("cancelBtn").onclick=closeSettings;
 $("saveBtn").onclick=saveSettings;
 $("searchInput").oninput=onSearch;
 $("modal").onclick=function(e){ if(e.target===this) closeSettings(); };
+
+/* ---------- pull-to-refresh (drag a column down at the top to reload) ---------- */
+(function(){
+  var TH=80, startY=null, pulling=false, hint=$("pullHint");
+  function bind(el){
+    if(!el) return;
+    el.addEventListener("touchstart", function(e){
+      pulling = el.scrollTop<=0;
+      startY = pulling ? e.touches[0].clientY : null;
+    }, false);
+    el.addEventListener("touchmove", function(e){
+      if(!pulling||startY==null) return;
+      var dy=e.touches[0].clientY-startY;
+      if(dy>0 && el.scrollTop<=0){
+        if(e.cancelable) e.preventDefault();       // stop rubber-band while pulling
+        var d=Math.min(dy,140);
+        hint.style.height=d+"px"; hint.style.opacity=Math.min(1,d/TH);
+        hint.innerHTML = d>=TH ? "&#8635; release to reload" : "&#8595; pull to reload";
+      } else { pulling=false; hint.style.height="0"; hint.style.opacity=0; }
+    }, {passive:false});
+    el.addEventListener("touchend", function(e){
+      if(pulling && startY!=null){
+        var dy=e.changedTouches[0].clientY-startY;
+        if(dy>=TH && el.scrollTop<=0){ hint.innerHTML="&#8635; reloading&hellip;"; window.location.reload(); return; }
+      }
+      hint.style.height="0"; hint.style.opacity=0; startY=null; pulling=false;
+    }, false);
+  }
+  bind($("pmList")); bind($("cxList"));
+})();
 
 /* ---------- go ---------- */
 loadState();
