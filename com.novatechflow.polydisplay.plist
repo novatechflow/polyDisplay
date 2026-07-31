@@ -9,8 +9,17 @@
 <dict>
   <key>Label</key>
   <string>com.novatechflow.polydisplay</string>
+  <!--
+    Launched under `caffeinate` so the Mac won't system-sleep while the server
+    is running - including with the lid closed. -s holds off sleep on AC power;
+    -i also covers idle sleep. When on battery the Mac still sleeps normally.
+    caffeinate runs __BIN__ as its child and drops the assertion when it exits.
+  -->
   <key>ProgramArguments</key>
   <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-s</string>
+    <string>-i</string>
     <string>__BIN__</string>
   </array>
   <key>WorkingDirectory</key>
