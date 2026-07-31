@@ -49,7 +49,7 @@ func defaultConfig() Config {
 		Wallet:     "",
 		CandleDays: 1,
 		Port:       8080,
-		Sort:       "az",
+		Sort:       "trades",
 		Coins: []Coin{
 			{"BTC", "Bitcoin", "bitcoin", ""},
 			{"ETH", "Ethereum", "ethereum", ""},
@@ -83,21 +83,49 @@ func loadConfig() Config {
 		c.CandleDays = 7
 	}
 	if c.Sort == "" {
-		c.Sort = "az"
+		c.Sort = "trades"
 	}
 	return c
 }
 
-// order coins for display per cfg.Sort (default: symbol A-Z)
-func sortedCoins(coins []Coin, mode string) []Coin {
+// order coins for display per cfg.Sort
+//   "trades" (default): tokens in current Polymarket positions first, then A-Z
+//   "az": symbol A-Z    "config": as added
+func sortedCoins(coins []Coin, mode string, active map[string]bool) []Coin {
 	out := make([]Coin, len(coins))
 	copy(out, coins)
-	if mode == "az" {
+	byAZ := func(i, j int) bool { return strings.ToUpper(out[i].Sym) < strings.ToUpper(out[j].Sym) }
+	switch mode {
+	case "config":
+		// keep as added
+	case "az":
+		sort.SliceStable(out, byAZ)
+	default: // "trades"
 		sort.SliceStable(out, func(i, j int) bool {
-			return strings.ToUpper(out[i].Sym) < strings.ToUpper(out[j].Sym)
+			ai, aj := active[out[i].ID], active[out[j].ID]
+			if ai != aj {
+				return ai // traded assets float to the top
+			}
+			return byAZ(i, j)
 		})
 	}
 	return out
+}
+
+// which watchlist tokens are referenced by current Polymarket positions
+// (e.g. a "Will Ethereum reach $X" market activates ETH)
+func activeCoins(positions []Position, coins []Coin) map[string]bool {
+	active := map[string]bool{}
+	for _, p := range positions {
+		lt := strings.ToLower(p.Title)
+		for _, cn := range coins {
+			if strings.Contains(lt, strings.ToLower(cn.Name)) ||
+				(len(cn.Sym) >= 3 && strings.Contains(lt, strings.ToLower(cn.Sym))) {
+				active[cn.ID] = true
+			}
+		}
+	}
+	return active
 }
 
 func saveConfig(c Config) {
@@ -116,6 +144,7 @@ type CoinState struct {
 	Price   float64  `json:"price"`
 	Chg24h  float64  `json:"chg24h"`
 	Source  string   `json:"source"` // "binance" | "coingecko" | ""
+	Active  bool     `json:"active"` // referenced by a current Polymarket position
 	Candles []Candle `json:"candles"`
 }
 
@@ -372,14 +401,16 @@ func refreshFast() {
 		// else: not yet cached (first few seconds after start) -> shows blank, not an error
 	}
 
+	active := activeCoins(positions, c.Coins)
+
 	mu.Lock()
 	coinStates := make([]CoinState, 0, len(c.Coins))
-	for _, cn := range sortedCoins(c.Coins, c.Sort) {
+	for _, cn := range sortedCoins(c.Coins, c.Sort, active) {
 		p := prices[cn.ID]
 		coinStates = append(coinStates, CoinState{
 			Sym: cn.Sym, Name: cn.Name, ID: cn.ID,
 			Price: p.price, Chg24h: p.chg,
-			Source: csource[cn.ID], Candles: candles[cn.ID],
+			Source: csource[cn.ID], Active: active[cn.ID], Candles: candles[cn.ID],
 		})
 	}
 	state = State{

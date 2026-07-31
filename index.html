@@ -51,6 +51,9 @@
   .price-move{font-variant-numeric:tabular-nums;}
 
   .coin{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin:8px 4px;}
+  .coin.active{box-shadow:inset 3px 0 0 var(--accent);}
+  .coin .traded{font-size:10px;font-weight:700;color:var(--accent);margin-left:8px;
+    text-transform:uppercase;letter-spacing:.5px;vertical-align:middle;}
   .coin .top{display:flex;align-items:baseline;justify-content:space-between;}
   .coin .sym{font-size:18px;font-weight:700;}
   .coin .name{font-size:12px;color:var(--muted);margin-left:8px;}
@@ -62,6 +65,8 @@
     font-family:"SF Mono",Menlo,Monaco,monospace;background:rgba(11,14,19,.55);
     padding:0 3px;border-radius:3px;pointer-events:none;}
   .yhi{top:0;} .ylo{bottom:15px;}
+  .ylast{position:absolute;left:3px;font-size:9px;color:var(--accent);background:rgba(11,14,19,.65);
+    padding:0 3px;border-radius:3px;pointer-events:none;font-family:"SF Mono",Menlo,Monaco,monospace;}
   .xaxis{display:flex;justify-content:space-between;font-family:"SF Mono",Menlo,Monaco,monospace;
     font-size:9px;color:var(--muted);padding:2px 1px 0;}
   .srctag{font-size:11px;color:var(--muted);float:right;}
@@ -125,7 +130,7 @@
       <div class="list" id="cxList"><div class="empty">Connecting to server&hellip;</div></div>
     </div>
   </main>
-  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v10 &middot; server</span></footer>
+  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v11 &middot; server</span></footer>
 </div>
 
 <div class="modal" id="modal">
@@ -140,6 +145,7 @@
     </select>
     <label>Sort watchlist</label>
     <select id="sortSel">
+      <option value="trades">Traded assets first</option>
       <option value="az">Symbol A&ndash;Z</option>
       <option value="config">As added (custom order)</option>
     </select>
@@ -191,6 +197,9 @@ function candleChart(data,w,h){
     var yo=Y(o),yc=Y(c),top=Math.min(yo,yc),bh=Math.max(1,Math.abs(yo-yc));
     s+='<rect x="'+(x-bw/2).toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" fill="'+col+'"/>';
   }
+  // last-price line
+  var yl=Y(data[n-1][4]);
+  s+='<line x1="0" y1="'+yl.toFixed(1)+'" x2="'+w+'" y2="'+yl.toFixed(1)+'" stroke="#5b8cff" stroke-width="0.8" stroke-dasharray="4,3" opacity="0.8"/>';
   return s+'</svg>';
 }
 
@@ -228,10 +237,13 @@ function chartWithAxis(data,w,h,days){
   if(!data||data.length<2) return '<svg class="chart" height="'+h+'"></svg>';
   var lo=Infinity,hi=-Infinity;
   for(var i=0;i<data.length;i++){ if(data[i][3]<lo)lo=data[i][3]; if(data[i][2]>hi)hi=data[i][2]; }
-  var n=data.length, labels="";
+  var n=data.length, range=(hi-lo)||1, last=data[n-1][4], labels="";
+  var yl=h-2-((last-lo)/range)*(h-4);
+  var lastTop=Math.max(0,Math.min(h-11,yl-6));
   for(var f=0;f<=3;f++){ var idx=Math.round((n-1)*f/3); labels+='<span>'+axisTime(data[idx][0],days)+'</span>'; }
   return '<div class="chartwrap">'+
     '<div class="yhi">'+fmtUsd(hi)+'</div><div class="ylo">'+fmtUsd(lo)+'</div>'+
+    '<div class="ylast" style="top:'+lastTop.toFixed(0)+'px">'+fmtUsd(last)+'</div>'+
     candleChart(data,w,h)+
     '<div class="xaxis">'+labels+'</div></div>';
 }
@@ -274,8 +286,9 @@ function render(s){
   for(var k=0;k<coins.length;k++){
     var c=coins[k];
     var tag=c.source?('<span class="srctag">'+(c.source==="binance"?"Binance":"CoinGecko")+'</span>'):"";
-    cl+='<div class="coin"><div class="top">'+
-      '<div><span class="sym">'+esc(c.sym)+'</span><span class="name">'+esc(c.name)+'</span></div>'+
+    var traded=c.active?'<span class="traded">&bull; trading</span>':"";
+    cl+='<div class="coin'+(c.active?' active':'')+'"><div class="top">'+
+      '<div><span class="sym">'+esc(c.sym)+'</span>'+traded+'<span class="name">'+esc(c.name)+'</span></div>'+
       '<div><span class="val">'+fmtUsd(c.price)+'</span>'+
         '<span class="chg '+cls(c.chg24h)+'">'+(c.chg24h!=null?fmtPct(c.chg24h)+" 24h":"")+'</span></div></div>'+
       chartWithAxis(c.candles,320,72,s.candleDays)+tag+'</div>';
@@ -294,7 +307,7 @@ function openSettings(){
     draftCfg=c; draftCoins=(c.coins||[]).slice();
     $("walletInput").value=c.wallet||"";
     $("daysSel").value=String(c.candleDays||7);
-    $("sortSel").value=c.sort||"az";
+    $("sortSel").value=c.sort||"trades";
     renderChips(); $("searchInput").value=""; $("results").innerHTML="";
     $("modal").className="modal show";
   }).catch(function(){ showErr("Cannot load settings (server down?)"); });
@@ -335,7 +348,7 @@ function onSearch(){
   },350);
 }
 function saveSettings(){
-  var body={ wallet:$("walletInput").value.trim(), candleDays:+$("daysSel").value||7, sort:$("sortSel").value||"az", coins:draftCoins||[] };
+  var body={ wallet:$("walletInput").value.trim(), candleDays:+$("daysSel").value||7, sort:$("sortSel").value||"trades", coins:draftCoins||[] };
   fetch(API+"/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
     .then(function(){ window.location.reload(); })
     .catch(function(){ showErr("Save failed (server down?)"); });
