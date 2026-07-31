@@ -1,6 +1,6 @@
 {
   "wallet": "",
-  "candleDays": 7,
+  "candleDays": 1,
   "port": 8080,
   "coins": [
     {

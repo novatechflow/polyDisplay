@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html manifest="polydisplay.appcache">
+<html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
@@ -58,6 +58,11 @@
   .coin .chg{font-size:13px;font-weight:600;margin-left:8px;}
   .chart{width:100%;display:block;margin-top:8px;}
   .srctag{font-size:11px;color:var(--muted);float:right;}
+  .log-head{margin:16px 4px 8px;padding-top:10px;border-top:1px solid var(--line);
+    font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:600;}
+  .log{font-family:"SF Mono",Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:12px;line-height:1.6;padding:0 4px;}
+  .logrow{white-space:pre;overflow:hidden;text-overflow:ellipsis;}
+  .logrow .lt{color:var(--muted);}
   .up{color:var(--green);} .down{color:var(--red);} .flat{color:var(--muted);}
   .empty{color:var(--muted);text-align:center;padding:40px 20px;font-size:15px;}
   .err-banner{display:none;background:rgba(255,119,119,.12);color:var(--red);font-size:13px;
@@ -109,11 +114,11 @@
       <div class="list" id="pmList"><div class="empty">Connecting to server&hellip;</div></div>
     </div>
     <div class="col right">
-      <div class="col-head"><h2>Watchlist &middot; 7d</h2><div class="sub" id="cxUpdated">&mdash;</div></div>
+      <div class="col-head"><h2 id="cxTitle">Watchlist</h2><div class="sub" id="cxUpdated">&mdash;</div></div>
       <div class="list" id="cxList"><div class="empty">Connecting to server&hellip;</div></div>
     </div>
   </main>
-  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v4 &middot; server</span></footer>
+  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v7 &middot; server</span></footer>
 </div>
 
 <div class="modal" id="modal">
@@ -135,6 +140,7 @@
       <button class="btn" id="cancelBtn">Cancel</button>
       <button class="btn primary" id="saveBtn">Save &amp; reload</button>
     </div>
+    <button class="btn" id="reloadBtn" style="width:100%;margin-top:10px">Reload app &middot; clear cache</button>
     <div class="muted" style="margin-top:10px">Saved on the server (config.json). Data source: Binance &rarr; CoinGecko fallback.</div>
   </div>
 </div>
@@ -176,6 +182,29 @@ function candleChart(data,w,h){
   return s+'</svg>';
 }
 
+function padR(s,n){ s=String(s); while(s.length<n) s+=" "; return s; }
+function trimNum(n){ n=+n; return (n===Math.floor(n))?String(n):n.toFixed(2); }
+// returns the activity feed as HTML, appended below the positions in the same scroll column
+function activityHtml(acts){
+  var lg='<div class="log-head">Recent activity</div>';
+  if(!acts.length) return lg+'<div class="log"><div class="lt">no recent activity</div></div>';
+  lg+='<div class="log">';
+  for(var i=0;i<acts.length;i++){
+    var a=acts[i], dt=new Date(a.t*1000);
+    var tm=p2(dt.getHours())+":"+p2(dt.getMinutes())+":"+p2(dt.getSeconds());
+    var lbl=(a.side||a.type||"").toUpperCase();
+    var lc=lbl==="BUY"?"up":lbl==="SELL"?"down":"flat";
+    var detail=(a.type==="TRADE")
+      ? (trimNum(a.size)+"@"+(+a.price).toFixed(3))
+      : ("$"+(+a.usdc).toFixed(2));
+    var oc=a.outcome?("["+esc(a.outcome)+"] "):"";
+    lg+='<div class="logrow"><span class="lt">'+tm+'</span>  '+
+        '<span class="'+lc+'">'+padR(lbl,4)+'</span> '+
+        padR(detail,11)+' '+oc+esc(a.title)+'</div>';
+  }
+  return lg+'</div>';
+}
+
 /* ---------- poll the server ---------- */
 function loadState(){
   fetch(API+"/api/state",{cache:"no-store"})
@@ -186,11 +215,11 @@ function loadState(){
 }
 
 function render(s){
-  /* Polymarket positions (no charts) */
-  var rows=s.positions||[], pl=$("pmList");
-  if(!rows.length){ pl.innerHTML='<div class="empty">No open positions.</div>'; $("pmSummary").innerHTML="&mdash;"; }
+  /* Polymarket positions + activity feed in one scroll column */
+  var rows=s.positions||[], html="";
+  if(!rows.length){ html='<div class="empty">No open positions.</div>'; $("pmSummary").innerHTML="&mdash;"; }
   else {
-    var totalVal=0,totalPnl=0,html="";
+    var totalVal=0,totalPnl=0;
     for(var i=0;i<rows.length;i++){
       var p=rows[i]; totalVal+=(+p.currentValue||0); totalPnl+=(+p.cashPnl||0);
       var isYes=(p.outcome||"").toLowerCase()==="yes";
@@ -203,9 +232,10 @@ function render(s){
         '</div>'+
         '<div class="row" style="margin-top:4px"><span class="meta">value</span><span>'+fmtUsd(+p.currentValue)+'</span></div></div>';
     }
-    pl.innerHTML=html;
     $("pmSummary").innerHTML=fmtUsd(totalVal)+' <span class="'+cls(totalPnl)+'">'+fmtSignedUsd(totalPnl)+'</span>';
   }
+  html += activityHtml(s.activity||[]);
+  $("pmList").innerHTML=html;
 
   /* Tokens with candlesticks */
   var coins=s.coins||[], cl="";
@@ -221,6 +251,7 @@ function render(s){
   }
   $("cxList").innerHTML=cl;
 
+  if(s.candleDays) $("cxTitle").innerHTML="Watchlist &middot; "+s.candleDays+"d";
   var d=s.updated?new Date(s.updated*1000):new Date();
   $("cxUpdated").textContent="upd "+p2(d.getHours())+":"+p2(d.getMinutes())+":"+p2(d.getSeconds());
 }
@@ -277,9 +308,25 @@ function saveSettings(){
     .then(function(){ window.location.reload(); })
     .catch(function(){ showErr("Save failed (server down?)"); });
 }
+// Force a fresh copy: clear any legacy AppCache + localStorage, then reload.
+function purgeAndReload(){
+  try{ localStorage.clear(); }catch(e){}
+  var ac=window.applicationCache; // only present on devices still holding an old cached page
+  if(ac){
+    try{
+      ac.addEventListener("updateready",function(){ try{ac.swapCache();}catch(e){} location.reload(); },false);
+      ac.addEventListener("noupdate",function(){ location.reload(); },false);
+      ac.addEventListener("error",function(){ location.reload(); },false);
+      ac.update();
+      return;
+    }catch(e){}
+  }
+  location.reload();
+}
 $("gearBtn").onclick=openSettings;
 $("cancelBtn").onclick=closeSettings;
 $("saveBtn").onclick=saveSettings;
+$("reloadBtn").onclick=purgeAndReload;
 $("searchInput").oninput=onSearch;
 $("modal").onclick=function(e){ if(e.target===this) closeSettings(); };
 
@@ -315,7 +362,6 @@ $("modal").onclick=function(e){ if(e.target===this) closeSettings(); };
 
 /* ---------- go ---------- */
 loadState();
-if(window.applicationCache){ window.applicationCache.addEventListener("updateready",function(){ window.location.reload(); },false); }
 </script>
 </body>
 </html>

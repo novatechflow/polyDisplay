@@ -34,10 +34,9 @@ Mac awake on the LAN. The binary cross-compiles for a Raspberry Pi unchanged
 | File | Purpose |
 |------|---------|
 | `server.go` | The aggregator + static web server + config/search API. |
-| `index.html` | The web app (consumes `/api/state`). |
+| `index.html` | The web app (consumes `/api/state`). Always loaded fresh from the server — no browser/app cache to get stuck on. |
 | `config.json` | Wallet, watchlist, candle range, port. Editable in-app or by hand. |
-| `polydisplay.appcache` | Offline cache so the home-screen icon launches even if the page host blips. |
-| `install-macos.sh` | Builds the binary + installs the launchd auto-start service. |
+| `install-macos.sh` | Builds + ad-hoc codesigns the binary, adds a firewall exception if needed, installs the launchd auto-start service. |
 | `com.novatechflow.polydisplay.plist` | LaunchAgent template (filled in by the installer). |
 
 ## Run it
@@ -51,11 +50,23 @@ go run .
 ```bash
 ./install-macos.sh
 ```
-This builds `polydisplayd`, installs a LaunchAgent (`RunAtLoad` + `KeepAlive`),
-and prints the URL. It starts at login and restarts if it crashes.
+This builds + ad-hoc codesigns `polydisplayd`, adds a macOS firewall exception
+if the firewall is on, installs a LaunchAgent (`RunAtLoad` + `KeepAlive`), and
+prints the URL. It restarts if it crashes.
+
+**On reboot:** a LaunchAgent starts at *login*, so for an unattended reboot
+enable **automatic login** (System Settings → Users & Groups). The ad-hoc
+codesign + firewall exception mean no "accept incoming connections?" dialog on
+startup. (For pre-login start you'd need a LaunchDaemon, which requires `sudo`.)
 
 Optional: for higher CoinGecko limits, paste a free demo key into the
 `CG_DEMO_KEY` value in the plist (or `export CG_DEMO_KEY=...` for `go run`).
+
+## Refreshing
+
+The page is always fetched fresh from the server, so it can't get stuck on an
+old build. To force a reload on the iPad: **pull down** at the top of either
+column, or open **⚙ → Reload · clear cache**.
 
 ## Set up the iPad as a kiosk
 

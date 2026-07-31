@@ -44,7 +44,7 @@ const configPath = "config.json"
 func defaultConfig() Config {
 	return Config{
 		Wallet:     "",
-		CandleDays: 7,
+		CandleDays: 1,
 		Port:       8080,
 		Coins: []Coin{
 			{"BTC", "Bitcoin", "bitcoin", ""},
@@ -112,20 +112,35 @@ type Position struct {
 	CurrentValue float64 `json:"currentValue"`
 }
 
+type Act struct {
+	Time    int64   `json:"t"`
+	Type    string  `json:"type"`    // TRADE, REDEEM, MERGE, SPLIT, REWARD, ...
+	Side    string  `json:"side"`    // BUY / SELL (for TRADE)
+	Size    float64 `json:"size"`
+	Price   float64 `json:"price"`
+	Usdc    float64 `json:"usdc"`
+	Title   string  `json:"title"`
+	Outcome string  `json:"outcome"`
+}
+
 type State struct {
-	Updated   int64      `json:"updated"`
-	Wallet    string     `json:"wallet"`
-	Positions []Position `json:"positions"`
-	Coins     []CoinState `json:"coins"`
-	Note      string     `json:"note"`
+	Updated    int64       `json:"updated"`
+	Wallet     string      `json:"wallet"`
+	CandleDays int         `json:"candleDays"`
+	Positions  []Position  `json:"positions"`
+	Coins      []CoinState `json:"coins"`
+	Activity   []Act       `json:"activity"`
+	Note       string      `json:"note"`
 }
 
 var (
 	mu      sync.RWMutex
 	cfg     Config
 	state   State
-	candles = map[string][]Candle{} // id -> candles (refreshed slowly)
-	csource = map[string]string{}   // id -> source
+	candles = map[string][]Candle{}    // id -> candles (refreshed slowly)
+	csource = map[string]string{}      // id -> source
+	bnHas   = map[string]bool{}        // id -> has a working Binance pair (absent = unknown)
+	cgPrice = map[string][2]float64{}  // id -> {price, chg} cached CoinGecko price (non-Binance coins)
 	client  = &http.Client{Timeout: 12 * time.Second}
 	trigger = make(chan struct{}, 1)
 )
@@ -227,25 +242,38 @@ func fetchCgCandles(c Coin, days int) ([]Candle, error) {
 	return out, nil
 }
 
-// live prices for all coins in one CoinGecko call (cheap, no geoblock)
-func fetchPrices(coins []Coin) (map[string]struct {
-	USD float64 `json:"usd"`
-	Chg float64 `json:"usd_24h_change"`
-}, error) {
-	ids := ""
-	for i, c := range coins {
-		if i > 0 {
-			ids += ","
-		}
-		ids += c.ID
+// live price + 24h change from Binance (primary source)
+func fetchBinanceTicker(sym string) (float64, float64, error) {
+	var t struct {
+		LastPrice string `json:"lastPrice"`
+		Pct       string `json:"priceChangePercent"`
 	}
-	url := "https://api.coingecko.com/api/v3/simple/price?ids=" + ids + "&vs_currencies=usd&include_24hr_change=true"
-	var out map[string]struct {
+	if err := getJSON("https://api.binance.com/api/v3/ticker/24hr?symbol="+sym, &t, nil); err != nil {
+		return 0, 0, err
+	}
+	if t.LastPrice == "" {
+		return 0, 0, fmt.Errorf("no price")
+	}
+	p, _ := strconv.ParseFloat(t.LastPrice, 64)
+	c, _ := strconv.ParseFloat(t.Pct, 64)
+	return p, c, nil
+}
+
+// CoinGecko price fallback (only for tokens with no Binance pair, e.g. FLR)
+func fetchCgPrice(id string) (float64, float64, error) {
+	var m map[string]struct {
 		USD float64 `json:"usd"`
 		Chg float64 `json:"usd_24h_change"`
 	}
-	err := getJSON(url, &out, cgHeaders())
-	return out, err
+	url := "https://api.coingecko.com/api/v3/simple/price?ids=" + id + "&vs_currencies=usd&include_24hr_change=true"
+	if err := getJSON(url, &m, cgHeaders()); err != nil {
+		return 0, 0, err
+	}
+	v, ok := m[id]
+	if !ok {
+		return 0, 0, fmt.Errorf("no price")
+	}
+	return v.USD, v.Chg, nil
 }
 
 func fetchPositions(wallet string) ([]Position, error) {
@@ -254,6 +282,28 @@ func fetchPositions(wallet string) ([]Position, error) {
 	var out []Position
 	err := getJSON(url, &out, nil)
 	return out, err
+}
+
+func fetchActivity(wallet string) ([]Act, error) {
+	url := "https://data-api.polymarket.com/activity?user=" + wallet + "&limit=20"
+	var raw []struct {
+		Timestamp int64   `json:"timestamp"`
+		Type      string  `json:"type"`
+		Side      string  `json:"side"`
+		Size      float64 `json:"size"`
+		Price     float64 `json:"price"`
+		UsdcSize  float64 `json:"usdcSize"`
+		Title     string  `json:"title"`
+		Outcome   string  `json:"outcome"`
+	}
+	if err := getJSON(url, &raw, nil); err != nil {
+		return nil, err
+	}
+	out := make([]Act, 0, len(raw))
+	for _, a := range raw {
+		out = append(out, Act{a.Timestamp, a.Type, a.Side, a.Size, a.Price, a.UsdcSize, a.Title, a.Outcome})
+	}
+	return out, nil
 }
 
 /* ------------------------- refresh loops ------------------------- */
@@ -269,13 +319,38 @@ func refreshFast() {
 	if err != nil {
 		note = "polymarket: " + err.Error()
 	}
+	activity, aerr := fetchActivity(c.Wallet)
+	if aerr != nil {
+		activity = nil
+	}
 
-	prices, perr := fetchPrices(c.Coins)
-	if perr != nil {
-		if note != "" {
-			note += " | "
+	// Binance-only hot path. Tokens with no Binance pair (e.g. FLR) use the
+	// CoinGecko price cached by the slow loop, so CoinGecko is never called at
+	// 20s cadence (that was the source of the 429s).
+	type pr struct{ price, chg float64 }
+	prices := map[string]pr{}
+	for _, cn := range c.Coins {
+		mu.RLock()
+		known, seen := bnHas[cn.ID]
+		cached, hasCache := cgPrice[cn.ID]
+		mu.RUnlock()
+
+		if !seen || known { // unknown or known-on-Binance -> try Binance
+			if p, ch, e := fetchBinanceTicker(bnSymbol(cn)); e == nil {
+				prices[cn.ID] = pr{p, ch}
+				mu.Lock()
+				bnHas[cn.ID] = true
+				mu.Unlock()
+				continue
+			}
+			mu.Lock()
+			bnHas[cn.ID] = false
+			mu.Unlock()
 		}
-		note += "prices: " + perr.Error()
+		if hasCache { // non-Binance token -> use cached CoinGecko price
+			prices[cn.ID] = pr{cached[0], cached[1]}
+		}
+		// else: not yet cached (first few seconds after start) -> shows blank, not an error
 	}
 
 	mu.Lock()
@@ -284,16 +359,18 @@ func refreshFast() {
 		p := prices[cn.ID]
 		coinStates = append(coinStates, CoinState{
 			Sym: cn.Sym, Name: cn.Name, ID: cn.ID,
-			Price: p.USD, Chg24h: p.Chg,
+			Price: p.price, Chg24h: p.chg,
 			Source: csource[cn.ID], Candles: candles[cn.ID],
 		})
 	}
 	state = State{
-		Updated:   time.Now().Unix(),
-		Wallet:    c.Wallet,
-		Positions: positions,
-		Coins:     coinStates,
-		Note:      note,
+		Updated:    time.Now().Unix(),
+		Wallet:     c.Wallet,
+		CandleDays: c.CandleDays,
+		Positions:  positions,
+		Coins:      coinStates,
+		Activity:   activity,
+		Note:       note,
 	}
 	mu.Unlock()
 }
@@ -316,9 +393,20 @@ func refreshSlow() {
 			mu.Lock()
 			candles[cn.ID] = cs
 			csource[cn.ID] = src
+			bnHas[cn.ID] = src == "binance"
 			mu.Unlock()
 		}
-		time.Sleep(1500 * time.Millisecond) // gentle on CoinGecko free tier
+		// non-Binance token: cache a CoinGecko price so the hot path never calls CG
+		if src == "coingecko" {
+			if p, ch, e := fetchCgPrice(cn.ID); e == nil {
+				mu.Lock()
+				cgPrice[cn.ID] = [2]float64{p, ch}
+				mu.Unlock()
+			}
+			time.Sleep(1500 * time.Millisecond) // gentle on CoinGecko free tier
+		} else {
+			time.Sleep(200 * time.Millisecond) // Binance handles bursts fine -> snappy refresh
+		}
 	}
 }
 
@@ -372,6 +460,8 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		saved := cfg
 		candles = map[string][]Candle{}
 		csource = map[string]string{}
+		bnHas = map[string]bool{}
+		cgPrice = map[string][2]float64{}
 		mu.Unlock()
 		saveConfig(saved)
 		select {
