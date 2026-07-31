@@ -118,7 +118,7 @@
       <div class="list" id="cxList"><div class="empty">Connecting to server&hellip;</div></div>
     </div>
   </main>
-  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v7 &middot; server</span></footer>
+  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v8 &middot; server</span></footer>
 </div>
 
 <div class="modal" id="modal">
@@ -183,6 +183,7 @@ function candleChart(data,w,h){
 }
 
 function padR(s,n){ s=String(s); while(s.length<n) s+=" "; return s; }
+function padL(s,n){ s=String(s); while(s.length<n) s=" "+s; return s; }
 function trimNum(n){ n=+n; return (n===Math.floor(n))?String(n):n.toFixed(2); }
 // returns the activity feed as HTML, appended below the positions in the same scroll column
 function activityHtml(acts){
@@ -195,12 +196,12 @@ function activityHtml(acts){
     var lbl=(a.side||a.type||"").toUpperCase();
     var lc=lbl==="BUY"?"up":lbl==="SELL"?"down":"flat";
     var detail=(a.type==="TRADE")
-      ? (trimNum(a.size)+"@"+(+a.price).toFixed(3))
+      ? (padL(trimNum(a.size),3)+" @ "+(+a.price).toFixed(3))
       : ("$"+(+a.usdc).toFixed(2));
     var oc=a.outcome?("["+esc(a.outcome)+"] "):"";
-    lg+='<div class="logrow"><span class="lt">'+tm+'</span>  '+
-        '<span class="'+lc+'">'+padR(lbl,4)+'</span> '+
-        padR(detail,11)+' '+oc+esc(a.title)+'</div>';
+    lg+='<div class="logrow"><span class="lt">'+tm+'</span>   '+
+        '<span class="'+lc+'">'+padR(lbl,4)+'</span>   '+
+        padR(detail,13)+'  '+oc+esc(a.title)+'</div>';
   }
   return lg+'</div>';
 }
