@@ -18,7 +18,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,6 +38,7 @@ type Config struct {
 	Wallet     string `json:"wallet"`
 	CandleDays int    `json:"candleDays"`
 	Port       int    `json:"port"`
+	Sort       string `json:"sort"` // "az" (symbol A-Z) | "config" (as added)
 	Coins      []Coin `json:"coins"`
 }
 
@@ -46,6 +49,7 @@ func defaultConfig() Config {
 		Wallet:     "",
 		CandleDays: 1,
 		Port:       8080,
+		Sort:       "az",
 		Coins: []Coin{
 			{"BTC", "Bitcoin", "bitcoin", ""},
 			{"ETH", "Ethereum", "ethereum", ""},
@@ -78,7 +82,22 @@ func loadConfig() Config {
 	if c.CandleDays == 0 {
 		c.CandleDays = 7
 	}
+	if c.Sort == "" {
+		c.Sort = "az"
+	}
 	return c
+}
+
+// order coins for display per cfg.Sort (default: symbol A-Z)
+func sortedCoins(coins []Coin, mode string) []Coin {
+	out := make([]Coin, len(coins))
+	copy(out, coins)
+	if mode == "az" {
+		sort.SliceStable(out, func(i, j int) bool {
+			return strings.ToUpper(out[i].Sym) < strings.ToUpper(out[j].Sym)
+		})
+	}
+	return out
 }
 
 func saveConfig(c Config) {
@@ -355,7 +374,7 @@ func refreshFast() {
 
 	mu.Lock()
 	coinStates := make([]CoinState, 0, len(c.Coins))
-	for _, cn := range c.Coins {
+	for _, cn := range sortedCoins(c.Coins, c.Sort) {
 		p := prices[cn.ID]
 		coinStates = append(coinStates, CoinState{
 			Sym: cn.Sym, Name: cn.Name, ID: cn.ID,
@@ -453,6 +472,9 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if nc.CandleDays != 0 {
 			cfg.CandleDays = nc.CandleDays
+		}
+		if nc.Sort != "" {
+			cfg.Sort = nc.Sort
 		}
 		if nc.Coins != nil {
 			cfg.Coins = nc.Coins
