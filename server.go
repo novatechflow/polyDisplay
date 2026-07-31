@@ -189,33 +189,46 @@ var (
 	csource = map[string]string{}      // id -> source
 	bnHas   = map[string]bool{}        // id -> has a working Binance pair (absent = unknown)
 	cgPrice = map[string][2]float64{}  // id -> {price, chg} cached CoinGecko price (non-Binance coins)
-	client  = &http.Client{Timeout: 12 * time.Second}
+	// Fresh connection per request: a VPN's short idle timeout was dropping the
+	// pooled keep-alive connections during the 20s gap between cycles, so the
+	// first couple of requests each cycle failed (BTC/ETH showed price 0).
+	client = &http.Client{
+		Timeout:   12 * time.Second,
+		Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, DisableKeepAlives: true},
+	}
 	trigger = make(chan struct{}, 1)
 )
 
 /* ------------------------- HTTP helpers ------------------------- */
 
 func getJSON(url string, out interface{}, headers map[string]string) error {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ { // retry once on a network error
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return err
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			return fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return json.Unmarshal(b, out)
 	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(b, out)
+	return lastErr
 }
 
 func cgHeaders() map[string]string {
