@@ -1,0 +1,5 @@
+# built binary
+/polydisplayd
+/polydisplay
+# runtime logs
+*.log

@@ -1,0 +1,11 @@
+CACHE MANIFEST
+# polyDisplay offline cache
+# Bump this version string to push an update to already-cached iPads.
+# v3 - 2026-07-31 (Go aggregator server; token candles; no PM lines)
+
+CACHE:
+index.html
+
+# Everything else (the live APIs) must always go to the network.
+NETWORK:
+*

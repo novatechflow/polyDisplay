@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html manifest="polydisplay.appcache">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="polyDisplay">
+<title>polyDisplay</title>
+<!--
+  polyDisplay - kiosk dashboard for an old iPad (iOS 10.3.3)
+  The iPad talks ONLY to the local Go server (/api/*): it aggregates
+  Polymarket positions + crypto prices/candles (Binance-first, CoinGecko
+  fallback) so the iPad never hits an external API, rate limit, or geoblock.
+  Left : Polymarket positions   Right: token watchlist + 7d candlesticks
+-->
+<style>
+  :root{--bg:#0b0e13;--panel:#141922;--panel2:#1b2230;--line:#232c3b;--text:#e6ecf5;
+        --muted:#8a97a8;--green:#34d399;--red:#f77;--accent:#5b8cff;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,"Helvetica Neue",Helvetica,Arial,sans-serif;
+    -webkit-user-select:none;user-select:none;overflow:hidden;}
+  #app{display:flex;flex-direction:column;height:100vh;}
+  header{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;
+    background:var(--panel);border-bottom:1px solid var(--line);flex:0 0 auto;}
+  header .brand{font-size:20px;font-weight:700;letter-spacing:.5px;}
+  header .brand span{color:var(--accent);}
+  header .right{display:flex;align-items:center;}
+  header .status{font-size:13px;color:var(--muted);text-align:right;line-height:1.4;margin-right:14px;}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--muted);
+    margin-left:6px;vertical-align:middle;}
+  .dot.ok{background:var(--green);} .dot.err{background:var(--red);}
+  .gear{font-size:22px;color:var(--muted);background:none;border:none;cursor:pointer;padding:4px 6px;}
+  main{display:flex;flex:1 1 auto;min-height:0;}
+  .col{flex:1 1 50%;min-width:0;display:flex;flex-direction:column;}
+  .col.left{border-right:1px solid var(--line);}
+  .col-head{display:flex;align-items:center;justify-content:space-between;padding:10px 16px 6px;flex:0 0 auto;}
+  .col-head h2{margin:0;font-size:15px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:1px;}
+  .col-head .sub{font-size:15px;font-weight:700;text-align:right;}
+  .list{flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:4px 12px 12px;}
+
+  .pos{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 4px;}
+  .pos .title{font-size:15px;font-weight:600;line-height:1.25;margin-bottom:6px;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .pos .row{display:flex;align-items:center;justify-content:space-between;font-size:13px;}
+  .pos .meta{color:var(--muted);}
+  .badge{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:6px;margin-right:8px;}
+  .badge.yes{background:rgba(52,211,153,.15);color:var(--green);}
+  .badge.no{background:rgba(255,119,119,.15);color:var(--red);}
+  .price-move{font-variant-numeric:tabular-nums;}
+
+  .coin{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin:8px 4px;}
+  .coin .top{display:flex;align-items:baseline;justify-content:space-between;}
+  .coin .sym{font-size:18px;font-weight:700;}
+  .coin .name{font-size:12px;color:var(--muted);margin-left:8px;}
+  .coin .val{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;}
+  .coin .chg{font-size:13px;font-weight:600;margin-left:8px;}
+  .chart{width:100%;display:block;margin-top:8px;}
+  .srctag{font-size:11px;color:var(--muted);float:right;}
+  .up{color:var(--green);} .down{color:var(--red);} .flat{color:var(--muted);}
+  .empty{color:var(--muted);text-align:center;padding:40px 20px;font-size:15px;}
+  .err-banner{display:none;background:rgba(255,119,119,.12);color:var(--red);font-size:13px;
+    padding:6px 16px;border-bottom:1px solid var(--line);}
+  .err-banner.show{display:block;}
+  footer{flex:0 0 auto;padding:6px 16px;font-size:11px;color:var(--muted);border-top:1px solid var(--line);
+    display:flex;justify-content:space-between;}
+
+  .modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:10;}
+  .modal.show{display:flex;align-items:center;justify-content:center;}
+  .sheet{background:var(--panel2);border:1px solid var(--line);border-radius:14px;width:520px;max-width:92%;
+    max-height:88%;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:18px 20px;}
+  .sheet h3{margin:0 0 12px;font-size:18px;}
+  .sheet label{display:block;font-size:12px;color:var(--muted);margin:12px 0 4px;text-transform:uppercase;letter-spacing:1px;}
+  .sheet input,.sheet select{width:100%;padding:10px 12px;font-size:15px;background:var(--bg);color:var(--text);
+    border:1px solid var(--line);border-radius:8px;-webkit-appearance:none;}
+  .chip{display:flex;align-items:center;justify-content:space-between;background:var(--bg);
+    border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:6px 0;font-size:14px;}
+  .chip .x{color:var(--red);font-weight:700;cursor:pointer;padding:0 6px;font-size:18px;}
+  .result{padding:8px 10px;border-bottom:1px solid var(--line);font-size:14px;cursor:pointer;}
+  .result:active{background:var(--bg);}
+  .btnrow{display:flex;gap:10px;margin-top:18px;}
+  .btn{flex:1;padding:11px;border-radius:8px;border:1px solid var(--line);background:var(--bg);
+    color:var(--text);font-size:15px;font-weight:600;cursor:pointer;}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+  .muted{color:var(--muted);font-size:12px;}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand">poly<span>Display</span></div>
+    <div class="right">
+      <div class="status">
+        <div id="clock">--:--:--</div>
+        <div>Server <span id="srvDot" class="dot"></span></div>
+      </div>
+      <button class="gear" id="gearBtn" title="Settings">&#9881;</button>
+    </div>
+  </header>
+  <div id="errBanner" class="err-banner"></div>
+  <main>
+    <div class="col left">
+      <div class="col-head"><h2>Polymarket</h2><div class="sub" id="pmSummary">&mdash;</div></div>
+      <div class="list" id="pmList"><div class="empty">Connecting to server&hellip;</div></div>
+    </div>
+    <div class="col right">
+      <div class="col-head"><h2>Watchlist &middot; 7d</h2><div class="sub" id="cxUpdated">&mdash;</div></div>
+      <div class="list" id="cxList"><div class="empty">Connecting to server&hellip;</div></div>
+    </div>
+  </main>
+  <footer><span id="footL">polyDisplay</span><span id="appVer">v3 &middot; server</span></footer>
+</div>
+
+<div class="modal" id="modal">
+  <div class="sheet">
+    <h3>Settings</h3>
+    <label>Polymarket wallet</label>
+    <input id="walletInput" type="text" spellcheck="false" autocapitalize="off" placeholder="0x...">
+    <label>Candle range</label>
+    <select id="daysSel">
+      <option value="1">1 day</option><option value="7">7 days</option>
+      <option value="14">14 days</option><option value="30">30 days</option>
+    </select>
+    <label>Watchlist assets</label>
+    <div id="chips"></div>
+    <label>Add asset (search)</label>
+    <input id="searchInput" type="text" spellcheck="false" autocapitalize="off" placeholder="e.g. bitcoin, sol, chainlink">
+    <div id="results"></div>
+    <div class="btnrow">
+      <button class="btn" id="cancelBtn">Cancel</button>
+      <button class="btn primary" id="saveBtn">Save &amp; reload</button>
+    </div>
+    <div class="muted" style="margin-top:10px">Saved on the server (config.json). Data source: Binance &rarr; CoinGecko fallback.</div>
+  </div>
+</div>
+
+<script>
+/* the page is served BY the Go server, so the API is same-origin */
+var API = "";                 // e.g. set to "http://192.168.4.201:8080" to point elsewhere
+var POLL = 10000;             // how often the iPad asks the server for fresh state
+
+function $(id){ return document.getElementById(id); }
+function p2(x){ return (x<10?"0":"")+x; }
+function fmtUsd(n){ if(n==null||isNaN(n))return "-"; var a=Math.abs(n),dp=a>=1000?0:a>=1?2:a>=0.01?4:6;
+  return "$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:dp,maximumFractionDigits:dp}); }
+function fmtSignedUsd(n){ if(n==null||isNaN(n))return "-"; return (n>=0?"+":"-")+fmtUsd(Math.abs(n)); }
+function fmtPct(n){ if(n==null||isNaN(n))return ""; return (n>=0?"+":"")+Number(n).toFixed(2)+"%"; }
+function cls(n){ return n>0?"up":n<0?"down":"flat"; }
+function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function setDot(id,ok){ $(id).className="dot "+(ok?"ok":"err"); }
+function showErr(msg){ var b=$("errBanner"); if(msg){ b.textContent=msg; b.className="err-banner show"; } else { b.className="err-banner"; } }
+
+function tick(){ var d=new Date(); $("clock").textContent=p2(d.getHours())+":"+p2(d.getMinutes())+":"+p2(d.getSeconds()); }
+setInterval(tick,1000); tick();
+
+/* candlestick chart (tokens only) */
+function candleChart(data,w,h){
+  if(!data||data.length<2) return '<svg class="chart" height="'+h+'"></svg>';
+  var lo=Infinity,hi=-Infinity;
+  for(var i=0;i<data.length;i++){ if(data[i][3]<lo)lo=data[i][3]; if(data[i][2]>hi)hi=data[i][2]; }
+  var range=(hi-lo)||1, n=data.length, cw=w/n, bw=Math.max(1.2,cw*0.62);
+  function Y(v){ return h-2-((v-lo)/range)*(h-4); }
+  var s='<svg class="chart" viewBox="0 0 '+w+' '+h+'" height="'+h+'" preserveAspectRatio="none">';
+  for(var j=0;j<n;j++){
+    var o=data[j][1],high=data[j][2],low=data[j][3],c=data[j][4];
+    var x=j*cw+cw/2, up=c>=o, col=up?"#34d399":"#f77";
+    s+='<line x1="'+x.toFixed(1)+'" y1="'+Y(high).toFixed(1)+'" x2="'+x.toFixed(1)+'" y2="'+Y(low).toFixed(1)+'" stroke="'+col+'" stroke-width="1"/>';
+    var yo=Y(o),yc=Y(c),top=Math.min(yo,yc),bh=Math.max(1,Math.abs(yo-yc));
+    s+='<rect x="'+(x-bw/2).toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" fill="'+col+'"/>';
+  }
+  return s+'</svg>';
+}
+
+/* ---------- poll the server ---------- */
+function loadState(){
+  fetch(API+"/api/state",{cache:"no-store"})
+    .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
+    .then(function(s){ setDot("srvDot",true); showErr(s.note||""); render(s); })
+    .catch(function(e){ setDot("srvDot",false); showErr("Server unreachable: "+e.message); })
+    .then(function(){ setTimeout(loadState, POLL); });
+}
+
+function render(s){
+  /* Polymarket positions (no charts) */
+  var rows=s.positions||[], pl=$("pmList");
+  if(!rows.length){ pl.innerHTML='<div class="empty">No open positions.</div>'; $("pmSummary").innerHTML="&mdash;"; }
+  else {
+    var totalVal=0,totalPnl=0,html="";
+    for(var i=0;i<rows.length;i++){
+      var p=rows[i]; totalVal+=(+p.currentValue||0); totalPnl+=(+p.cashPnl||0);
+      var isYes=(p.outcome||"").toLowerCase()==="yes";
+      html+='<div class="pos"><div class="title">'+esc(p.title)+'</div>'+
+        '<div class="row"><span class="meta">'+
+          '<span class="badge '+(isYes?"yes":"no")+'">'+esc(p.outcome)+'</span>'+
+          esc((+p.size).toFixed(1))+' @ <span class="price-move">'+
+          (p.avgPrice!=null?(+p.avgPrice).toFixed(3):"-")+' &rarr; '+(p.curPrice!=null?(+p.curPrice).toFixed(3):"-")+'</span></span>'+
+          '<span class="'+cls(+p.cashPnl)+'">'+fmtSignedUsd(+p.cashPnl)+' <span style="opacity:.75">('+fmtPct(+p.percentPnl)+')</span></span>'+
+        '</div>'+
+        '<div class="row" style="margin-top:4px"><span class="meta">value</span><span>'+fmtUsd(+p.currentValue)+'</span></div></div>';
+    }
+    pl.innerHTML=html;
+    $("pmSummary").innerHTML=fmtUsd(totalVal)+' <span class="'+cls(totalPnl)+'">'+fmtSignedUsd(totalPnl)+'</span>';
+  }
+
+  /* Tokens with candlesticks */
+  var coins=s.coins||[], cl="";
+  if(!coins.length){ cl='<div class="empty">No assets. Tap &#9881; to add.</div>'; }
+  for(var k=0;k<coins.length;k++){
+    var c=coins[k];
+    var tag=c.source?('<span class="srctag">'+(c.source==="binance"?"Binance":"CoinGecko")+'</span>'):"";
+    cl+='<div class="coin"><div class="top">'+
+      '<div><span class="sym">'+esc(c.sym)+'</span><span class="name">'+esc(c.name)+'</span></div>'+
+      '<div><span class="val">'+fmtUsd(c.price)+'</span>'+
+        '<span class="chg '+cls(c.chg24h)+'">'+(c.chg24h!=null?fmtPct(c.chg24h)+" 24h":"")+'</span></div></div>'+
+      candleChart(c.candles,320,72)+tag+'</div>';
+  }
+  $("cxList").innerHTML=cl;
+
+  var d=s.updated?new Date(s.updated*1000):new Date();
+  $("cxUpdated").textContent="upd "+p2(d.getHours())+":"+p2(d.getMinutes())+":"+p2(d.getSeconds());
+}
+
+/* ---------- settings (server config) ---------- */
+var draftCoins=null, draftCfg=null;
+function openSettings(){
+  fetch(API+"/api/config").then(function(r){return r.json();}).then(function(c){
+    draftCfg=c; draftCoins=(c.coins||[]).slice();
+    $("walletInput").value=c.wallet||"";
+    $("daysSel").value=String(c.candleDays||7);
+    renderChips(); $("searchInput").value=""; $("results").innerHTML="";
+    $("modal").className="modal show";
+  }).catch(function(){ showErr("Cannot load settings (server down?)"); });
+}
+function closeSettings(){ $("modal").className="modal"; draftCoins=null; }
+function renderChips(){
+  var h="";
+  for(var i=0;i<draftCoins.length;i++){
+    h+='<div class="chip"><span><b>'+esc(draftCoins[i].sym)+'</b> &middot; '+esc(draftCoins[i].name)+'</span>'+
+       '<span class="x" data-i="'+i+'">&times;</span></div>';
+  }
+  if(!draftCoins.length) h='<div class="muted">No assets yet — search below to add.</div>';
+  $("chips").innerHTML=h;
+  var xs=$("chips").getElementsByClassName("x");
+  for(var k=0;k<xs.length;k++){ xs[k].onclick=function(){ draftCoins.splice(+this.getAttribute("data-i"),1); renderChips(); }; }
+}
+var searchTimer=null;
+function onSearch(){
+  var q=$("searchInput").value.trim();
+  if(searchTimer)clearTimeout(searchTimer);
+  if(!q){ $("results").innerHTML=""; return; }
+  searchTimer=setTimeout(function(){
+    fetch(API+"/api/search?q="+encodeURIComponent(q)).then(function(r){return r.json();}).then(function(list){
+      list=list||[]; var h="";
+      for(var i=0;i<list.length;i++){
+        h+='<div class="result" data-id="'+esc(list[i].ID)+'" data-sym="'+esc((list[i].Sym||"").toUpperCase())+'" data-name="'+esc(list[i].Name)+'">'+
+           '<b>'+esc((list[i].Sym||"").toUpperCase())+'</b> &middot; '+esc(list[i].Name)+'</div>';
+      }
+      $("results").innerHTML=h||'<div class="muted">No matches.</div>';
+      var rs=$("results").getElementsByClassName("result");
+      for(var k=0;k<rs.length;k++){ rs[k].onclick=function(){
+        var id=this.getAttribute("data-id");
+        for(var j=0;j<draftCoins.length;j++){ if(draftCoins[j].id===id) return; }
+        draftCoins.push({ sym:this.getAttribute("data-sym"), name:this.getAttribute("data-name"), id:id });
+        renderChips(); $("searchInput").value=""; $("results").innerHTML="";
+      }; }
+    }).catch(function(){ $("results").innerHTML='<div class="muted">Search failed.</div>'; });
+  },350);
+}
+function saveSettings(){
+  var body={ wallet:$("walletInput").value.trim(), candleDays:+$("daysSel").value||7, coins:draftCoins||[] };
+  fetch(API+"/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
+    .then(function(){ window.location.reload(); })
+    .catch(function(){ showErr("Save failed (server down?)"); });
+}
+$("gearBtn").onclick=openSettings;
+$("cancelBtn").onclick=closeSettings;
+$("saveBtn").onclick=saveSettings;
+$("searchInput").oninput=onSearch;
+$("modal").onclick=function(e){ if(e.target===this) closeSettings(); };
+
+/* ---------- go ---------- */
+loadState();
+if(window.applicationCache){ window.applicationCache.addEventListener("updateready",function(){ window.location.reload(); },false); }
+</script>
+</body>
+</html>

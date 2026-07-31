@@ -1,0 +1,57 @@
+{
+  "wallet": "",
+  "candleDays": 7,
+  "port": 8080,
+  "coins": [
+    {
+      "sym": "BTC",
+      "name": "Bitcoin",
+      "id": "bitcoin"
+    },
+    {
+      "sym": "ETH",
+      "name": "Ethereum",
+      "id": "ethereum"
+    },
+    {
+      "sym": "FLR",
+      "name": "Flare",
+      "id": "flare-networks"
+    },
+    {
+      "sym": "HBAR",
+      "name": "Hedera",
+      "id": "hedera-hashgraph"
+    },
+    {
+      "sym": "POND",
+      "name": "Marlin",
+      "id": "marlin"
+    },
+    {
+      "sym": "SOL",
+      "name": "Solana",
+      "id": "solana"
+    },
+    {
+      "sym": "TRUMP",
+      "name": "Official Trump",
+      "id": "official-trump"
+    },
+    {
+      "sym": "WIF",
+      "name": "dogwifhat",
+      "id": "dogwifcoin"
+    },
+    {
+      "sym": "XLM",
+      "name": "Stellar",
+      "id": "stellar"
+    },
+    {
+      "sym": "XRP",
+      "name": "XRP",
+      "id": "ripple"
+    }
+  ]
+}

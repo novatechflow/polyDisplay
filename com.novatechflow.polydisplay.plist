@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template LaunchAgent for the polyDisplay server.
+  Do not use directly - run ./install-macos.sh, which fills in __BIN__/__DIR__
+  with real paths and installs this to ~/Library/LaunchAgents/.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.novatechflow.polydisplay</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__BIN__</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__DIR__</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>__DIR__/polydisplay.log</string>
+  <key>StandardErrorPath</key>
+  <string>__DIR__/polydisplay.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- optional: paste a free CoinGecko demo key for higher rate limits -->
+    <key>CG_DEMO_KEY</key>
+    <string></string>
+  </dict>
+</dict>
+</plist>
