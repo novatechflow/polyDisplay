@@ -3,3 +3,5 @@
 /polydisplay
 # runtime logs
 *.log
+# runtime state: written by the server, recreated from defaultConfig() if absent
+/config.json
