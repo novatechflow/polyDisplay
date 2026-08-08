@@ -16,7 +16,8 @@
 -->
 <style>
   :root{--bg:#0b0e13;--panel:#141922;--panel2:#1b2230;--line:#232c3b;--text:#e6ecf5;
-        --muted:#8a97a8;--green:#34d399;--red:#f77;--accent:#5b8cff;}
+        --muted:#8a97a8;--green:#34d399;--red:#f77;--accent:#5b8cff;
+        --buy:#7aa2ff;--yes:#a78bfa;--no:#4fc3d9;}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);
     font-family:-apple-system,"Helvetica Neue",Helvetica,Arial,sans-serif;
@@ -46,8 +47,8 @@
   .pos .row{display:flex;align-items:center;justify-content:space-between;font-size:13px;}
   .pos .meta{color:var(--muted);}
   .badge{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:6px;margin-right:8px;}
-  .badge.yes{background:rgba(52,211,153,.15);color:var(--green);}
-  .badge.no{background:rgba(255,119,119,.15);color:var(--red);}
+  .badge.yes{background:rgba(167,139,250,.16);color:var(--yes);}
+  .badge.no{background:rgba(79,195,217,.16);color:var(--no);}
   .price-move{font-variant-numeric:tabular-nums;}
 
   .coin{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin:8px 4px;}
@@ -76,6 +77,8 @@
   .logrow{white-space:pre;overflow:hidden;text-overflow:ellipsis;}
   .logrow .lt{color:var(--muted);}
   .up{color:var(--green);} .down{color:var(--red);} .flat{color:var(--muted);}
+  .buy{color:var(--buy);} .sell{color:var(--green);}
+  .win{color:var(--green);font-weight:600;} .loss{color:var(--red);font-weight:600;}
   .empty{color:var(--muted);text-align:center;padding:40px 20px;font-size:15px;}
   .err-banner{display:none;background:rgba(255,119,119,.12);color:var(--red);font-size:13px;
     padding:6px 16px;border-bottom:1px solid var(--line);}
@@ -130,7 +133,7 @@
       <div class="list" id="cxList"><div class="empty">Connecting to server&hellip;</div></div>
     </div>
   </main>
-  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v12 &middot; server</span></footer>
+  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v13 &middot; server</span></footer>
 </div>
 
 <div class="modal" id="modal">
@@ -197,7 +200,6 @@ function candleChart(data,w,h){
     var yo=Y(o),yc=Y(c),top=Math.min(yo,yc),bh=Math.max(1,Math.abs(yo-yc));
     s+='<rect x="'+(x-bw/2).toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" fill="'+col+'"/>';
   }
-  // last-price line
   var yl=Y(data[n-1][4]);
   s+='<line x1="0" y1="'+yl.toFixed(1)+'" x2="'+w+'" y2="'+yl.toFixed(1)+'" stroke="#5b8cff" stroke-width="0.8" stroke-dasharray="4,3" opacity="0.8"/>';
   return s+'</svg>';
@@ -206,7 +208,6 @@ function candleChart(data,w,h){
 function padR(s,n){ s=String(s); while(s.length<n) s+=" "; return s; }
 function padL(s,n){ s=String(s); while(s.length<n) s=" "+s; return s; }
 function trimNum(n){ n=+n; return (n===Math.floor(n))?String(n):n.toFixed(2); }
-// returns the activity feed as HTML, appended below the positions in the same scroll column
 function activityHtml(acts){
   var lg='<div class="log-head">Recent activity</div>';
   if(!acts.length) return lg+'<div class="log"><div class="lt">no recent activity</div></div>';
@@ -215,13 +216,16 @@ function activityHtml(acts){
     var a=acts[i], dt=new Date(a.t*1000);
     var tm=p2(dt.getHours())+":"+p2(dt.getMinutes())+":"+p2(dt.getSeconds());
     var lbl=(a.side||a.type||"").toUpperCase();
-    var lc=lbl==="BUY"?"up":lbl==="SELL"?"down":"flat";
+    var lc="flat";
+    if(lbl==="BUY") lc="buy";
+    else if(lbl==="SELL") lc="sell";
+    else if(a.type==="REDEEM") lc=(+a.usdc>0)?"win":"loss";
     var detail=(a.type==="TRADE")
       ? (padL(trimNum(a.size),3)+" @ "+(+a.price).toFixed(3))
       : ("$"+(+a.usdc).toFixed(2));
     var oc=a.outcome?("["+esc(a.outcome)+"] "):"";
     lg+='<div class="logrow"><span class="lt">'+tm+'</span>   '+
-        '<span class="'+lc+'">'+padR(lbl,4)+'</span>   '+
+        '<span class="'+lc+'">'+padR(lbl,6)+'</span> '+
         padR(detail,13)+'  '+oc+esc(a.title)+'</div>';
   }
   return lg+'</div>';
@@ -258,7 +262,6 @@ function loadState(){
 }
 
 function render(s){
-  /* Polymarket positions + activity feed in one scroll column */
   var rows=s.positions||[], html="";
   if(!rows.length){ html='<div class="empty">No open positions.</div>'; $("pmSummary").innerHTML="&mdash;"; }
   else {
@@ -280,7 +283,6 @@ function render(s){
   html += activityHtml(s.activity||[]);
   $("pmList").innerHTML=html;
 
-  /* Tokens with candlesticks */
   var coins=s.coins||[], cl="";
   if(!coins.length){ cl='<div class="empty">No assets. Tap &#9881; to add.</div>'; }
   for(var k=0;k<coins.length;k++){
