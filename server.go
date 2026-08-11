@@ -199,7 +199,111 @@ var (
 	trigger = make(chan struct{}, 1)
 )
 
+/* --------------------- Polymarket pacing --------------------- */
+//
+// data-api sends `cache-control: max-age=15`, so polling faster than that only
+// ever misses Cloudflare's cache and hits the origin rate limiter. We poll at
+// 30s, and on HTTP 429 back off exponentially (honouring Retry-After) while
+// continuing to serve the last positions we got.
+
+// data-api host; a var so tests can point it at a stub
+var polyBase = "https://data-api.polymarket.com"
+
+const (
+	polyInterval   = 30 * time.Second
+	polyBackoffMin = 60 * time.Second
+	polyBackoffMax = 10 * time.Minute
+)
+
+var (
+	polyNextAt    time.Time // don't call data-api before this
+	polyBackoff   time.Duration
+	polyWallet    string // wallet the cached positions/activity belong to
+	lastPositions []Position
+	lastActivity  []Act
+)
+
+// schedule the next data-api call after a rate-limit rejection
+func polyRateLimited(retryAfter time.Duration) {
+	if polyBackoff == 0 {
+		polyBackoff = polyBackoffMin
+	} else if polyBackoff < polyBackoffMax {
+		polyBackoff *= 2
+	}
+	if polyBackoff > polyBackoffMax {
+		polyBackoff = polyBackoffMax
+	}
+	wait := polyBackoff
+	if retryAfter > wait {
+		wait = retryAfter
+	}
+	polyNextAt = time.Now().Add(wait)
+	log.Printf("polymarket: rate limited, backing off %s", wait.Round(time.Second))
+}
+
+// banner text while we're sitting out a rate limit
+func polyBackoffNote() string {
+	return fmt.Sprintf("polymarket: rate limited, retrying in %s",
+		time.Until(polyNextAt).Round(time.Second))
+}
+
 /* ------------------------- HTTP helpers ------------------------- */
+
+// httpError carries the upstream status so callers can treat 429 specially.
+type httpError struct {
+	Status     int
+	RetryAfter time.Duration // from the Retry-After header, 0 if absent
+}
+
+func (e *httpError) Error() string { return fmt.Sprintf("HTTP %d", e.Status) }
+
+// Retry-After is either a delay in seconds or an HTTP date.
+func parseRetryAfter(v string) time.Duration {
+	if v == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+// host+path only - keeps the wallet and query noise out of the log line
+func shortURL(raw string) string {
+	if i := strings.Index(raw, "?"); i >= 0 {
+		raw = raw[:i]
+	}
+	return strings.TrimPrefix(strings.TrimPrefix(raw, "https://"), "http://")
+}
+
+// Log upstream failures, but collapse repeats: the Binance pair probe 400s once
+// per slow cycle for every non-Binance token (FLR etc), which would otherwise
+// bury the 429s this logging exists to catch.
+const upstreamLogEvery = 10 * time.Minute
+
+var (
+	upstreamLogMu    sync.Mutex
+	upstreamLoggedAt = map[string]time.Time{}
+)
+
+func logUpstream(url string, outcome interface{}) {
+	key := fmt.Sprintf("%s|%v", shortURL(url), outcome)
+	upstreamLogMu.Lock()
+	last, seen := upstreamLoggedAt[key]
+	fresh := !seen || time.Since(last) >= upstreamLogEvery
+	if fresh {
+		upstreamLoggedAt[key] = time.Now()
+	}
+	upstreamLogMu.Unlock()
+	if fresh {
+		log.Printf("upstream %s -> %v", shortURL(url), outcome)
+	}
+}
 
 func getJSON(url string, out interface{}, headers map[string]string) error {
 	var lastErr error
@@ -217,8 +321,11 @@ func getJSON(url string, out interface{}, headers map[string]string) error {
 			continue
 		}
 		if resp.StatusCode != 200 {
+			ra := parseRetryAfter(resp.Header.Get("Retry-After"))
 			resp.Body.Close()
-			return fmt.Errorf("HTTP %d", resp.StatusCode)
+			err := &httpError{Status: resp.StatusCode, RetryAfter: ra}
+			logUpstream(url, err)
+			return err
 		}
 		b, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 		resp.Body.Close()
@@ -227,6 +334,9 @@ func getJSON(url string, out interface{}, headers map[string]string) error {
 			continue
 		}
 		return json.Unmarshal(b, out)
+	}
+	if lastErr != nil {
+		logUpstream(url, lastErr)
 	}
 	return lastErr
 }
@@ -338,7 +448,7 @@ func fetchCgPrice(id string) (float64, float64, error) {
 }
 
 func fetchPositions(wallet string) ([]Position, error) {
-	url := "https://data-api.polymarket.com/positions?user=" + wallet +
+	url := polyBase + "/positions?user=" + wallet +
 		"&sizeThreshold=0.1&limit=100&sortBy=CURRENT&sortDirection=DESC"
 	var out []Position
 	err := getJSON(url, &out, nil)
@@ -346,7 +456,7 @@ func fetchPositions(wallet string) ([]Position, error) {
 }
 
 func fetchActivity(wallet string) ([]Act, error) {
-	url := "https://data-api.polymarket.com/activity?user=" + wallet + "&limit=20"
+	url := polyBase + "/activity?user=" + wallet + "&limit=20"
 	var raw []struct {
 		Timestamp int64   `json:"timestamp"`
 		Type      string  `json:"type"`
@@ -376,14 +486,35 @@ func refreshFast() {
 	mu.RUnlock()
 
 	note := ""
-	positions, err := fetchPositions(c.Wallet)
-	if err != nil {
-		note = "polymarket: " + err.Error()
+	positions, activity := lastPositions, lastActivity
+	if c.Wallet != polyWallet { // wallet changed -> refetch now, drop stale data
+		polyWallet, polyNextAt, polyBackoff = c.Wallet, time.Time{}, 0
+		positions, activity = nil, nil
 	}
-	activity, aerr := fetchActivity(c.Wallet)
-	if aerr != nil {
-		activity = nil
+
+	if time.Now().Before(polyNextAt) {
+		if polyBackoff > 0 { // rate limited: say so rather than silently showing stale data
+			note = polyBackoffNote()
+		}
+	} else {
+		p, err := fetchPositions(c.Wallet)
+		he, isHTTP := err.(*httpError)
+		switch {
+		case err == nil:
+			positions, polyBackoff = p, 0
+			polyNextAt = time.Now().Add(polyInterval)
+			if a, aerr := fetchActivity(c.Wallet); aerr == nil {
+				activity = a
+			}
+		case isHTTP && he.Status == 429:
+			polyRateLimited(he.RetryAfter) // keep serving the last positions we got
+			note = polyBackoffNote()
+		default:
+			note = "polymarket: " + err.Error()
+			polyNextAt = time.Now().Add(polyInterval)
+		}
 	}
+	lastPositions, lastActivity = positions, activity
 
 	// Binance-only hot path. Tokens with no Binance pair (e.g. FLR) use the
 	// CoinGecko price cached by the slow loop, so CoinGecko is never called at
