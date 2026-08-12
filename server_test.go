@@ -153,30 +153,55 @@ func TestRefreshFastBacksOffAndKeepsLastPositions(t *testing.T) {
 	}
 }
 
-func TestFetchPositionsSortsByEndDate(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestFetchPositionsSortsByEndTime(t *testing.T) {
+	// Same calendar day for noon/evening: only gamma's timestamp separates them.
+	poly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[
-			{"title":"later","endDate":"2026-09-01","currentValue":90},
-			{"title":"undated","currentValue":80},
-			{"title":"soon-big","endDate":"2026-08-12","currentValue":70},
-			{"title":"soon-small","endDate":"2026-08-12","currentValue":5}
+			{"title":"later","conditionId":"0xlater","endDate":"2026-09-01","currentValue":90},
+			{"title":"undated","conditionId":"0xnone","currentValue":80},
+			{"title":"evening-big","conditionId":"0xeve","endDate":"2026-08-12","currentValue":70},
+			{"title":"noon-small","conditionId":"0xnoon","endDate":"2026-08-12","currentValue":5}
 		]`))
 	}))
-	defer srv.Close()
+	defer poly.Close()
 
-	origBase := polyBase
-	polyBase = srv.URL
-	t.Cleanup(func() { polyBase = origBase })
+	var gammaCalls int
+	gamma := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gammaCalls++
+		w.Write([]byte(`[
+			{"conditionId":"0xlater","endDate":"2026-09-01T16:00:00Z"},
+			{"conditionId":"0xeve","endDate":"2026-08-12T18:00:00Z"},
+			{"conditionId":"0xnoon","endDate":"2026-08-12T12:00:00Z"}
+		]`))
+	}))
+	defer gamma.Close()
+
+	origPoly, origGamma := polyBase, gammaBase
+	polyBase, gammaBase = poly.URL, gamma.URL
+	endTimes = map[string]string{}
+	t.Cleanup(func() {
+		polyBase, gammaBase = origPoly, origGamma
+		endTimes = map[string]string{}
+	})
 
 	got, err := fetchPositions("0xtest")
 	if err != nil {
 		t.Fatalf("fetchPositions: %v", err)
 	}
-	want := []string{"soon-big", "soon-small", "later", "undated"}
+	want := []string{"noon-small", "evening-big", "later", "undated"}
 	for i, w := range want {
 		if got[i].Title != w {
 			t.Errorf("position %d = %q, want %q", i, got[i].Title, w)
 		}
+	}
+
+	// Second cycle must be served from cache, including the market gamma
+	// didn't know about.
+	if _, err := fetchPositions("0xtest"); err != nil {
+		t.Fatalf("second fetchPositions: %v", err)
+	}
+	if gammaCalls != 1 {
+		t.Errorf("gamma calls = %d, want 1", gammaCalls)
 	}
 }
 

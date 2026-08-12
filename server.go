@@ -158,6 +158,7 @@ type Position struct {
 	CashPnl      float64 `json:"cashPnl"`
 	PercentPnl   float64 `json:"percentPnl"`
 	CurrentValue float64 `json:"currentValue"`
+	ConditionID  string  `json:"conditionId"`
 	EndDate      string  `json:"endDate"`
 }
 
@@ -453,7 +454,8 @@ func fetchPositions(wallet string) ([]Position, error) {
 		"&sizeThreshold=0.1&limit=100&sortBy=CURRENT&sortDirection=DESC"
 	var out []Position
 	err := getJSON(url, &out, nil)
-	// Soonest resolution first; undated last. ISO dates sort as strings.
+	fillEndTimes(out)
+	// Soonest resolution first; undated last. ISO timestamps sort as strings.
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i].EndDate, out[j].EndDate
 		if (a == "") != (b == "") {
@@ -462,6 +464,63 @@ func fetchPositions(wallet string) ([]Position, error) {
 		return a < b
 	})
 	return out, err
+}
+
+// gamma host; a var so tests can point it at a stub
+var gammaBase = "https://gamma-api.polymarket.com"
+
+// end times never move once a market exists, so one lookup per market is enough
+var endTimes = map[string]string{}
+
+// /positions only carries a date ("2026-08-12"), which can't separate a market
+// closing at noon from one closing at 18:00. gamma has the full timestamp.
+func fillEndTimes(pos []Position) {
+	var missing []string
+	for _, p := range pos {
+		if p.ConditionID == "" {
+			continue
+		}
+		if _, ok := endTimes[p.ConditionID]; !ok {
+			missing = append(missing, p.ConditionID)
+		}
+	}
+	for len(missing) > 0 {
+		n := min(len(missing), 20)
+		if err := loadEndTimes(missing[:n]); err != nil {
+			log.Printf("gamma: end times unavailable, sorting by date: %v", err)
+			break
+		}
+		missing = missing[n:]
+	}
+	for i, p := range pos {
+		if t := endTimes[p.ConditionID]; t != "" {
+			pos[i].EndDate = t
+		}
+	}
+}
+
+func loadEndTimes(ids []string) error {
+	url := gammaBase + "/markets?limit=" + strconv.Itoa(len(ids))
+	for _, id := range ids {
+		url += "&condition_ids=" + id
+	}
+	var raw []struct {
+		ConditionID string `json:"conditionId"`
+		EndDate     string `json:"endDate"`
+	}
+	if err := getJSON(url, &raw, nil); err != nil {
+		return err
+	}
+	for _, m := range raw {
+		endTimes[m.ConditionID] = m.EndDate
+	}
+	// Cache the misses too, so an unknown market isn't re-queried every cycle.
+	for _, id := range ids {
+		if _, ok := endTimes[id]; !ok {
+			endTimes[id] = ""
+		}
+	}
+	return nil
 }
 
 func fetchActivity(wallet string) ([]Act, error) {
