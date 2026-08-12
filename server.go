@@ -158,6 +158,7 @@ type Position struct {
 	CashPnl      float64 `json:"cashPnl"`
 	PercentPnl   float64 `json:"percentPnl"`
 	CurrentValue float64 `json:"currentValue"`
+	EndDate      string  `json:"endDate"`
 }
 
 type Act struct {
@@ -452,6 +453,14 @@ func fetchPositions(wallet string) ([]Position, error) {
 		"&sizeThreshold=0.1&limit=100&sortBy=CURRENT&sortDirection=DESC"
 	var out []Position
 	err := getJSON(url, &out, nil)
+	// Soonest resolution first; undated last. ISO dates sort as strings.
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i].EndDate, out[j].EndDate
+		if (a == "") != (b == "") {
+			return b == ""
+		}
+		return a < b
+	})
 	return out, err
 }
 

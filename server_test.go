@@ -153,6 +153,33 @@ func TestRefreshFastBacksOffAndKeepsLastPositions(t *testing.T) {
 	}
 }
 
+func TestFetchPositionsSortsByEndDate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[
+			{"title":"later","endDate":"2026-09-01","currentValue":90},
+			{"title":"undated","currentValue":80},
+			{"title":"soon-big","endDate":"2026-08-12","currentValue":70},
+			{"title":"soon-small","endDate":"2026-08-12","currentValue":5}
+		]`))
+	}))
+	defer srv.Close()
+
+	origBase := polyBase
+	polyBase = srv.URL
+	t.Cleanup(func() { polyBase = origBase })
+
+	got, err := fetchPositions("0xtest")
+	if err != nil {
+		t.Fatalf("fetchPositions: %v", err)
+	}
+	want := []string{"soon-big", "soon-small", "later", "undated"}
+	for i, w := range want {
+		if got[i].Title != w {
+			t.Errorf("position %d = %q, want %q", i, got[i].Title, w)
+		}
+	}
+}
+
 func TestShortURLDropsWallet(t *testing.T) {
 	in := "https://data-api.polymarket.com/positions?user=0xdeadbeef&limit=100"
 	if got := shortURL(in); got != "data-api.polymarket.com/positions" {
