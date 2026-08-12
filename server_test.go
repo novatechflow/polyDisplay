@@ -205,6 +205,23 @@ func TestFetchPositionsSortsByEndTime(t *testing.T) {
 	}
 }
 
+func TestBinanceDue(t *testing.T) {
+	bnProbe = map[string]time.Time{}
+	t.Cleanup(func() { bnProbe = map[string]time.Time{} })
+
+	if !binanceDue("never-probed") {
+		t.Error("unknown token: want a probe")
+	}
+	bnProbe["flare-networks"] = time.Now().Add(bnProbeEvery)
+	if binanceDue("flare-networks") {
+		t.Error("recently 400'd: want the probe skipped")
+	}
+	bnProbe["flare-networks"] = time.Now().Add(-time.Minute)
+	if !binanceDue("flare-networks") {
+		t.Error("probe window elapsed: want a re-probe")
+	}
+}
+
 func TestShortURLDropsWallet(t *testing.T) {
 	in := "https://data-api.polymarket.com/positions?user=0xdeadbeef&limit=100"
 	if got := shortURL(in); got != "data-api.polymarket.com/positions" {

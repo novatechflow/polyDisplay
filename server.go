@@ -190,6 +190,7 @@ var (
 	candles = map[string][]Candle{}    // id -> candles (refreshed slowly)
 	csource = map[string]string{}      // id -> source
 	bnHas   = map[string]bool{}        // id -> has a working Binance pair (absent = unknown)
+	bnProbe = map[string]time.Time{}   // id -> when to re-probe a pair Binance doesn't list
 	cgPrice = map[string][2]float64{}  // id -> {price, chg} cached CoinGecko price (non-Binance coins)
 	// Fresh connection per request: a VPN's short idle timeout was dropping the
 	// pooled keep-alive connections during the 20s gap between cycles, so the
@@ -637,6 +638,16 @@ func refreshFast() {
 	mu.Unlock()
 }
 
+// How often to re-check a token Binance doesn't list. Every slow cycle was a
+// guaranteed 400 per such token; hourly still catches a new listing same-day.
+const bnProbeEvery = time.Hour
+
+func binanceDue(id string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return time.Now().After(bnProbe[id])
+}
+
 // slow: candles + polymarket history (every 5 min), spaced out
 func refreshSlow() {
 	mu.RLock()
@@ -646,18 +657,31 @@ func refreshSlow() {
 	for _, cn := range c.Coins {
 		var cs []Candle
 		var src string
-		if bc, err := fetchBinanceCandles(cn, c.CandleDays); err == nil {
-			cs, src = bc, "binance"
-		} else if gc, err := fetchCgCandles(cn, c.CandleDays); err == nil {
-			cs, src = gc, "coingecko"
+		probed := binanceDue(cn.ID)
+		if probed {
+			if bc, err := fetchBinanceCandles(cn, c.CandleDays); err == nil {
+				cs, src = bc, "binance"
+			}
 		}
+		if cs == nil {
+			if gc, err := fetchCgCandles(cn, c.CandleDays); err == nil {
+				cs, src = gc, "coingecko"
+			}
+		}
+		mu.Lock()
 		if cs != nil {
-			mu.Lock()
 			candles[cn.ID] = cs
 			csource[cn.ID] = src
 			bnHas[cn.ID] = src == "binance"
-			mu.Unlock()
 		}
+		if probed {
+			if src == "binance" {
+				delete(bnProbe, cn.ID)
+			} else {
+				bnProbe[cn.ID] = time.Now().Add(bnProbeEvery)
+			}
+		}
+		mu.Unlock()
 		// non-Binance token: cache a CoinGecko price so the hot path never calls CG
 		if src == "coingecko" {
 			if p, ch, e := fetchCgPrice(cn.ID); e == nil {
@@ -726,6 +750,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		candles = map[string][]Candle{}
 		csource = map[string]string{}
 		bnHas = map[string]bool{}
+		bnProbe = map[string]time.Time{}
 		cgPrice = map[string][2]float64{}
 		mu.Unlock()
 		saveConfig(saved)
