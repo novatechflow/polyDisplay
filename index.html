@@ -212,9 +212,10 @@ function chartX(m,i,w){ var cw=w/m.n; return i*cw+cw/2; }
 
 /* ---------- market structure (higher highs / lower lows) ---------- */
 
-/* minimum shift between thirds, as a fraction of the window range, for a
-   high or low to count as moved - below this the step scores zero */
-var TREND_DEADBAND=0.30;
+/* a high or low must move this many typical candle ranges to score a step.
+   Measured against candle size rather than window range: a trend inflates
+   its own window range, which would raise the bar the stronger it gets. */
+var TREND_DEADBAND_ATR=3.5;
 
 function segExtremes(data,from,to){
   var hi=-Infinity,lo=Infinity;
@@ -222,22 +223,34 @@ function segExtremes(data,from,to){
   return {hi:hi,lo:lo};
 }
 function stepSign(a,b,dead){ return b>a+dead ? 1 : (b<a-dead ? -1 : 0); }
+function medianCandleRange(data){
+  var r=[];
+  for(var i=0;i<data.length;i++) r.push(data[i][2]-data[i][3]);
+  r.sort(function(a,b){ return a-b; });
+  var m=r.length>>1;
+  return r.length%2 ? r[m] : (r[m-1]+r[m])/2;
+}
 
 /* Scores the window in thirds. Each side is graded on both adjacent steps
    plus the first-to-last span, so a window that trends then flattens still
-   reads directionally while a round trip cancels out to zero. */
+   reads directionally while a round trip cancels out to zero. A side that
+   scores zero is undecided, not opposed, so it does not veto the other. */
 function trendVerdict(data){
   if(!data||data.length<9) return null;
   var n=data.length, a=Math.floor(n/3), b=Math.floor(2*n/3);
   var s1=segExtremes(data,0,a), s2=segExtremes(data,a,b), s3=segExtremes(data,b,n);
-  var dead=(Math.max(s1.hi,s2.hi,s3.hi)-Math.min(s1.lo,s2.lo,s3.lo))*TREND_DEADBAND;
+  var dead=medianCandleRange(data)*TREND_DEADBAND_ATR;
   var H=stepSign(s1.hi,s2.hi,dead)+stepSign(s2.hi,s3.hi,dead)+stepSign(s1.hi,s3.hi,dead);
   var L=stepSign(s1.lo,s2.lo,dead)+stepSign(s2.lo,s3.lo,dead)+stepSign(s1.lo,s3.lo,dead);
-  if(H>0&&L>0) return {label:"Uptrend",  cls:"up",  why:"higher highs · higher lows"};
-  if(H<0&&L<0) return {label:"Downtrend",cls:"down",why:"lower highs · lower lows"};
   if(H>0&&L<0) return {label:"Expanding",cls:"flat",why:"higher highs · lower lows"};
   if(H<0&&L>0) return {label:"Coiling",  cls:"flat",why:"lower highs · higher lows"};
+  if(H>0||L>0)  return {label:"Uptrend",  cls:"up",  why:whyTrend(H,L,"higher")};
+  if(H<0||L<0)  return {label:"Downtrend",cls:"down",why:whyTrend(H,L,"lower")};
   return {label:"Range",cls:"flat",why:"no clear structure"};
+}
+function whyTrend(H,L,dir){
+  if(H&&L) return dir+" highs · "+dir+" lows";
+  return H ? dir+" highs · flat lows" : "flat highs · "+dir+" lows";
 }
 
 /* swing high: high beats the k candles either side. Ties are strict on the
@@ -291,16 +304,27 @@ function pivotDot(x,y,rx){
   return '<rect x="'+(x-rx).toFixed(1)+'" y="'+(y-1).toFixed(1)+'" width="'+(rx*2).toFixed(1)+
          '" height="2" fill="#8a97a8" opacity="0.45"/>';
 }
-/* line through the last two pivots on one side, extended to the right edge */
+/* least-squares line through every pivot on one side, so it spans the whole
+   period instead of hanging off the last two swings, clipped to the plot */
 function channelLine(m,idx,valAt,w,h,col){
   if(idx.length<2) return "";
-  var i1=idx[idx.length-2], i2=idx[idx.length-1];
-  var x1=chartX(m,i1,w), x2=chartX(m,i2,w);
-  if(x2===x1) return "";
-  var y1=chartY(m,valAt(i1),h), y2=chartY(m,valAt(i2),h);
-  var ye=y2+((y2-y1)/(x2-x1))*(w-x2);
-  return '<line x1="'+x1.toFixed(1)+'" y1="'+y1.toFixed(1)+'" x2="'+w+'" y2="'+ye.toFixed(1)+
-         '" stroke="'+col+'" stroke-width="0.9" stroke-dasharray="3,3" opacity="0.5"/>';
+  var k=idx.length, sx=0, sy=0, sxx=0, sxy=0;
+  for(var q=0;q<k;q++){
+    var x=chartX(m,idx[q],w), y=chartY(m,valAt(idx[q]),h);
+    sx+=x; sy+=y; sxx+=x*x; sxy+=x*y;
+  }
+  var den=k*sxx-sx*sx;
+  if(den===0) return "";
+  var sl=(k*sxy-sx*sy)/den, ic=(sy-sl*sx)/k, ax=0, bx=w;
+  if(sl!==0){
+    var xTop=-ic/sl, xBot=(h-ic)/sl;
+    ax=Math.max(ax,Math.min(xTop,xBot));
+    bx=Math.min(bx,Math.max(xTop,xBot));
+  } else if(ic<0||ic>h) return "";
+  if(bx-ax<1) return "";
+  return '<line x1="'+ax.toFixed(1)+'" y1="'+(sl*ax+ic).toFixed(1)+'" x2="'+bx.toFixed(1)+
+         '" y2="'+(sl*bx+ic).toFixed(1)+'" stroke="'+col+
+         '" stroke-width="0.9" stroke-dasharray="3,3" opacity="0.5"/>';
 }
 function extremeTick(x,y,tw){
   return '<line x1="'+(x-tw/2).toFixed(1)+'" y1="'+y.toFixed(1)+'" x2="'+(x+tw/2).toFixed(1)+
