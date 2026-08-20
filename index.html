@@ -62,14 +62,20 @@
   .coin .chg{font-size:13px;font-weight:600;margin-left:8px;}
   .chart{width:100%;display:block;}
   .chartwrap{position:relative;margin-top:8px;}
-  .yhi,.ylo{position:absolute;right:3px;font-size:9px;color:var(--muted);
+  .yhi,.ylo{position:absolute;font-size:9px;color:var(--muted);white-space:nowrap;
     font-family:"SF Mono",Menlo,Monaco,monospace;background:rgba(11,14,19,.55);
-    padding:0 3px;border-radius:3px;pointer-events:none;}
-  .yhi{top:0;} .ylo{bottom:15px;}
+    padding:0 3px;border-radius:3px;pointer-events:none;transform:translateX(-50%);}
   .ylast{position:absolute;left:3px;font-size:9px;color:var(--accent);background:rgba(11,14,19,.65);
     padding:0 3px;border-radius:3px;pointer-events:none;font-family:"SF Mono",Menlo,Monaco,monospace;}
   .xaxis{display:flex;justify-content:space-between;font-family:"SF Mono",Menlo,Monaco,monospace;
     font-size:9px;color:var(--muted);padding:2px 1px 0;}
+  .rangebar{display:flex;align-items:center;margin-top:6px;padding:0 1px;}
+  .rangebar .track{position:relative;flex:1 1 auto;height:4px;border-radius:2px;background:var(--line);}
+  .rangebar .fill{position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:var(--accent);opacity:.55;}
+  .rangebar .knob{position:absolute;top:-3px;width:2px;height:10px;border-radius:1px;
+    background:var(--text);margin-left:-1px;}
+  .rangebar .pct{flex:0 0 auto;margin-left:8px;font-size:9px;color:var(--muted);
+    font-family:"SF Mono",Menlo,Monaco,monospace;font-variant-numeric:tabular-nums;}
   .srctag{font-size:11px;color:var(--muted);float:right;}
   .log-head{margin:16px 4px 8px;padding-top:10px;border-top:1px solid var(--line);
     font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;font-weight:600;}
@@ -185,13 +191,29 @@ function showErr(msg){ var b=$("errBanner"); if(msg){ b.textContent=msg; b.class
 function tick(){ var d=new Date(); $("clock").textContent=p2(d.getHours())+":"+p2(d.getMinutes())+":"+p2(d.getSeconds()); }
 setInterval(tick,1000); tick();
 
+/* shared geometry for a candle series plus the live spot overlay */
+function chartMetrics(data,spot){
+  var lo=Infinity,hi=-Infinity,iHi=0,iLo=0;
+  for(var i=0;i<data.length;i++){
+    if(data[i][2]>hi){ hi=data[i][2]; iHi=i; }
+    if(data[i][3]<lo){ lo=data[i][3]; iLo=i; }
+  }
+  var last=data[data.length-1][4];
+  /* candles refresh on the slow loop, spot on the fast one - prefer spot,
+     fall back to the last close when the ticker has no price yet */
+  var sp=(spot!=null && isFinite(spot) && spot>0) ? +spot : last;
+  /* widen the plot range so a spot that ran past the window stays on canvas */
+  var pLo=Math.min(lo,sp), pHi=Math.max(hi,sp);
+  return {lo:lo,hi:hi,iHi:iHi,iLo:iLo,last:last,spot:sp,n:data.length,
+          plotLo:pLo,plotRange:(pHi-pLo)||1};
+}
+function chartY(m,v,h){ return h-2-((v-m.plotLo)/m.plotRange)*(h-4); }
+function chartX(m,i,w){ var cw=w/m.n; return i*cw+cw/2; }
+
 /* candlestick chart (tokens only) */
-function candleChart(data,w,h){
-  if(!data||data.length<2) return '<svg class="chart" height="'+h+'"></svg>';
-  var lo=Infinity,hi=-Infinity;
-  for(var i=0;i<data.length;i++){ if(data[i][3]<lo)lo=data[i][3]; if(data[i][2]>hi)hi=data[i][2]; }
-  var range=(hi-lo)||1, n=data.length, cw=w/n, bw=Math.max(1.2,cw*0.62);
-  function Y(v){ return h-2-((v-lo)/range)*(h-4); }
+function candleChart(data,w,h,m){
+  var n=m.n, cw=w/n, bw=Math.max(1.2,cw*0.62);
+  function Y(v){ return chartY(m,v,h); }
   var s='<svg class="chart" viewBox="0 0 '+w+' '+h+'" height="'+h+'" preserveAspectRatio="none">';
   for(var j=0;j<n;j++){
     var o=data[j][1],high=data[j][2],low=data[j][3],c=data[j][4];
@@ -200,9 +222,17 @@ function candleChart(data,w,h){
     var yo=Y(o),yc=Y(c),top=Math.min(yo,yc),bh=Math.max(1,Math.abs(yo-yc));
     s+='<rect x="'+(x-bw/2).toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" fill="'+col+'"/>';
   }
-  var yl=Y(data[n-1][4]);
+  /* ticks marking which candle made the window high and low */
+  var tw=Math.max(5,cw*1.6);
+  s+=extremeTick(chartX(m,m.iHi,w),Y(m.hi),tw);
+  s+=extremeTick(chartX(m,m.iLo,w),Y(m.lo),tw);
+  var yl=Y(m.spot);
   s+='<line x1="0" y1="'+yl.toFixed(1)+'" x2="'+w+'" y2="'+yl.toFixed(1)+'" stroke="#5b8cff" stroke-width="0.8" stroke-dasharray="4,3" opacity="0.8"/>';
   return s+'</svg>';
+}
+function extremeTick(x,y,tw){
+  return '<line x1="'+(x-tw/2).toFixed(1)+'" y1="'+y.toFixed(1)+'" x2="'+(x+tw/2).toFixed(1)+
+         '" y2="'+y.toFixed(1)+'" stroke="#8a97a8" stroke-width="1" opacity="0.85"/>';
 }
 
 function padR(s,n){ s=String(s); while(s.length<n) s+=" "; return s; }
@@ -237,19 +267,32 @@ function axisTime(ms,days){
   if(days<=1) return p2(d.getHours())+":"+p2(d.getMinutes());
   return (d.getMonth()+1)+"/"+d.getDate();
 }
-function chartWithAxis(data,w,h,days){
+/* keep a label anchored to its candle without letting it run off either edge */
+function labelLeft(m,i,w){ return Math.max(8,Math.min(92,(chartX(m,i,w)/w)*100)); }
+
+function chartWithAxis(data,w,h,days,spot){
   if(!data||data.length<2) return '<svg class="chart" height="'+h+'"></svg>';
-  var lo=Infinity,hi=-Infinity;
-  for(var i=0;i<data.length;i++){ if(data[i][3]<lo)lo=data[i][3]; if(data[i][2]>hi)hi=data[i][2]; }
-  var n=data.length, range=(hi-lo)||1, last=data[n-1][4], labels="";
-  var yl=h-2-((last-lo)/range)*(h-4);
-  var lastTop=Math.max(0,Math.min(h-11,yl-6));
+  var m=chartMetrics(data,spot), labels="";
+  var n=m.n; days=days||7;
   for(var f=0;f<=3;f++){ var idx=Math.round((n-1)*f/3); labels+='<span>'+axisTime(data[idx][0],days)+'</span>'; }
+  var spotTop=Math.max(0,Math.min(h-11,chartY(m,m.spot,h)-6));
+  var hiTop=Math.max(0,chartY(m,m.hi,h)-11);
+  var loTop=Math.min(h-11,chartY(m,m.lo,h)+2);
+  /* where spot sits inside the window's high-low band */
+  var span=m.hi-m.lo;
+  var pct=span>0 ? ((m.spot-m.lo)/span)*100 : 50;
+  pct=Math.max(0,Math.min(100,pct));
   return '<div class="chartwrap">'+
-    '<div class="yhi">'+fmtUsd(hi)+'</div><div class="ylo">'+fmtUsd(lo)+'</div>'+
-    '<div class="ylast" style="top:'+lastTop.toFixed(0)+'px">'+fmtUsd(last)+'</div>'+
-    candleChart(data,w,h)+
-    '<div class="xaxis">'+labels+'</div></div>';
+    '<div class="yhi" style="top:'+hiTop.toFixed(0)+'px;left:'+labelLeft(m,m.iHi,w).toFixed(1)+'%">&#9650; '+fmtUsd(m.hi)+'</div>'+
+    '<div class="ylo" style="top:'+loTop.toFixed(0)+'px;left:'+labelLeft(m,m.iLo,w).toFixed(1)+'%">&#9660; '+fmtUsd(m.lo)+'</div>'+
+    '<div class="ylast" style="top:'+spotTop.toFixed(0)+'px">'+fmtUsd(m.spot)+'</div>'+
+    candleChart(data,w,h,m)+
+    '<div class="xaxis">'+labels+'</div>'+
+    '<div class="rangebar"><div class="track">'+
+      '<div class="fill" style="width:'+pct.toFixed(1)+'%"></div>'+
+      '<div class="knob" style="left:'+pct.toFixed(1)+'%"></div></div>'+
+      '<div class="pct">'+pct.toFixed(0)+'% of '+days+'d range</div></div>'+
+    '</div>';
 }
 
 /* ---------- poll the server ---------- */
@@ -293,7 +336,7 @@ function render(s){
       '<div><span class="sym">'+esc(c.sym)+'</span>'+traded+'<span class="name">'+esc(c.name)+'</span></div>'+
       '<div><span class="val">'+fmtUsd(c.price)+'</span>'+
         '<span class="chg '+cls(c.chg24h)+'">'+(c.chg24h!=null?fmtPct(c.chg24h)+" 24h":"")+'</span></div></div>'+
-      chartWithAxis(c.candles,320,72,s.candleDays)+tag+'</div>';
+      chartWithAxis(c.candles,320,72,s.candleDays,c.price)+tag+'</div>';
   }
   $("cxList").innerHTML=cl;
 
