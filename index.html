@@ -366,7 +366,7 @@ function axisTime(ms,days){
 /* keep a label anchored to its candle without letting it run off either edge */
 function labelLeft(m,i,w){ return Math.max(8,Math.min(92,(chartX(m,i,w)/w)*100)); }
 
-function chartWithAxis(data,w,h,days,spot){
+function chartWithAxis(data,w,h,days,spot,trendData){
   if(!data||data.length<2) return '<svg class="chart" height="'+h+'"></svg>';
   var m=chartMetrics(data,spot), labels="";
   var n=m.n; days=days||7;
@@ -374,9 +374,11 @@ function chartWithAxis(data,w,h,days,spot){
   var spotTop=Math.max(0,Math.min(h-11,chartY(m,m.spot,h)-6));
   var hiTop=Math.max(0,chartY(m,m.hi,h)-11);
   var loTop=Math.min(h-11,chartY(m,m.lo,h)+2);
-  var tr=trendVerdict(data);
+  /* the chip reads 24h; the drawn pattern stays on the displayed period */
+  var tr=trendVerdict(trendData&&trendData.length>=9 ? trendData : data);
+  var trWin=(trendData&&trendData.length>=9) ? "24h" : days+"d";
   var trHtml=tr?('<div class="trendrow"><span class="trend '+tr.cls+'">'+tr.label+'</span>'+
-                 '<span class="why">'+esc(tr.why)+' &middot; '+days+'d</span></div>'):"";
+                 '<span class="why">'+esc(tr.why)+' &middot; '+trWin+'</span></div>'):"";
   return '<div class="chartwrap">'+
     '<div class="yhi" style="top:'+hiTop.toFixed(0)+'px;left:'+labelLeft(m,m.iHi,w).toFixed(1)+'%">&#9650; '+fmtUsd(m.hi)+'</div>'+
     '<div class="ylo" style="top:'+loTop.toFixed(0)+'px;left:'+labelLeft(m,m.iLo,w).toFixed(1)+'%">&#9660; '+fmtUsd(m.lo)+'</div>'+
@@ -427,7 +429,7 @@ function render(s){
       '<div><span class="sym">'+esc(c.sym)+'</span>'+traded+'<span class="name">'+esc(c.name)+'</span></div>'+
       '<div><span class="val">'+fmtUsd(c.price)+'</span>'+
         '<span class="chg '+cls(c.chg24h)+'">'+(c.chg24h!=null?fmtPct(c.chg24h)+" 24h":"")+'</span></div></div>'+
-      chartWithAxis(c.candles,320,72,s.candleDays,c.price)+tag+'</div>';
+      chartWithAxis(c.candles,320,72,s.candleDays,c.price,c.cand24)+tag+'</div>';
   }
   $("cxList").innerHTML=cl;
 

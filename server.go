@@ -5,8 +5,8 @@
 // web app to the iPad. The iPad therefore makes a single local request and never
 // touches an external API, cert, rate limit, or geoblock.
 //
-//   go run .            # dev
-//   go build -o polydisplayd .   # binary for launchd (see install-macos.sh)
+//	go run .            # dev
+//	go build -o polydisplayd .   # binary for launchd (see install-macos.sh)
 //
 // Optional: set CG_DEMO_KEY to a free CoinGecko demo key for higher limits.
 package main
@@ -89,8 +89,9 @@ func loadConfig() Config {
 }
 
 // order coins for display per cfg.Sort
-//   "trades" (default): tokens in current Polymarket positions first, then A-Z
-//   "az": symbol A-Z    "config": as added
+//
+//	"trades" (default): tokens in current Polymarket positions first, then A-Z
+//	"az": symbol A-Z    "config": as added
 func sortedCoins(coins []Coin, mode string, active map[string]bool) []Coin {
 	out := make([]Coin, len(coins))
 	copy(out, coins)
@@ -146,6 +147,7 @@ type CoinState struct {
 	Source  string   `json:"source"` // "binance" | "coingecko" | ""
 	Active  bool     `json:"active"` // referenced by a current Polymarket position
 	Candles []Candle `json:"candles"`
+	Cand24  []Candle `json:"cand24"` // last 24h, whatever the display period
 }
 
 type Position struct {
@@ -164,8 +166,8 @@ type Position struct {
 
 type Act struct {
 	Time    int64   `json:"t"`
-	Type    string  `json:"type"`    // TRADE, REDEEM, MERGE, SPLIT, REWARD, ...
-	Side    string  `json:"side"`    // BUY / SELL (for TRADE)
+	Type    string  `json:"type"` // TRADE, REDEEM, MERGE, SPLIT, REWARD, ...
+	Side    string  `json:"side"` // BUY / SELL (for TRADE)
 	Size    float64 `json:"size"`
 	Price   float64 `json:"price"`
 	Usdc    float64 `json:"usdc"`
@@ -187,11 +189,12 @@ var (
 	mu      sync.RWMutex
 	cfg     Config
 	state   State
-	candles = map[string][]Candle{}    // id -> candles (refreshed slowly)
-	csource = map[string]string{}      // id -> source
-	bnHas   = map[string]bool{}        // id -> has a working Binance pair (absent = unknown)
-	bnProbe = map[string]time.Time{}   // id -> when to re-probe a pair Binance doesn't list
-	cgPrice = map[string][2]float64{}  // id -> {price, chg} cached CoinGecko price (non-Binance coins)
+	candles = map[string][]Candle{}   // id -> candles (refreshed slowly)
+	cand24  = map[string][]Candle{}   // id -> last 24h, for the trend read
+	csource = map[string]string{}     // id -> source
+	bnHas   = map[string]bool{}       // id -> has a working Binance pair (absent = unknown)
+	bnProbe = map[string]time.Time{}  // id -> when to re-probe a pair Binance doesn't list
+	cgPrice = map[string][2]float64{} // id -> {price, chg} cached CoinGecko price (non-Binance coins)
 	// Fresh connection per request: a VPN's short idle timeout was dropping the
 	// pooled keep-alive connections during the 20s gap between cycles, so the
 	// first couple of requests each cycle failed (BTC/ETH showed price 0).
@@ -624,6 +627,7 @@ func refreshFast() {
 			Sym: cn.Sym, Name: cn.Name, ID: cn.ID,
 			Price: p.price, Chg24h: p.chg,
 			Source: csource[cn.ID], Active: active[cn.ID], Candles: candles[cn.ID],
+			Cand24: cand24[cn.ID],
 		})
 	}
 	state = State{
@@ -668,11 +672,27 @@ func refreshSlow() {
 				cs, src = gc, "coingecko"
 			}
 		}
+		// the trend read always wants 24h; a 7d/4h window only spans 6 candles
+		var c24 []Candle
+		if cs != nil && c.CandleDays == 1 {
+			c24 = cs
+		} else if src == "binance" {
+			if bc, err := fetchBinanceCandles(cn, 1); err == nil {
+				c24 = bc
+			}
+		} else if src == "coingecko" {
+			if gc, err := fetchCgCandles(cn, 1); err == nil {
+				c24 = gc
+			}
+		}
 		mu.Lock()
 		if cs != nil {
 			candles[cn.ID] = cs
 			csource[cn.ID] = src
 			bnHas[cn.ID] = src == "binance"
+		}
+		if c24 != nil {
+			cand24[cn.ID] = c24
 		}
 		if probed {
 			if src == "binance" {
@@ -748,6 +768,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		saved := cfg
 		candles = map[string][]Candle{}
+		cand24 = map[string][]Candle{}
 		csource = map[string]string{}
 		bnHas = map[string]bool{}
 		bnProbe = map[string]time.Time{}
