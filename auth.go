@@ -115,7 +115,7 @@ func writeTokens(w http.ResponseWriter) {
 var (
 	pinMu    sync.Mutex
 	pinFails = map[string]struct {
-		n    int
+		n     int
 		until time.Time
 	}{}
 )

@@ -1,5 +1,9 @@
 # polyDisplay
 
+[![CI](https://github.com/novatechflow/polyDisplay/actions/workflows/ci.yml/badge.svg)](https://github.com/novatechflow/polyDisplay/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/github/go-mod/go-version/novatechflow/polyDisplay)](go.mod)
+[![License](https://img.shields.io/badge/license-PolyForm%20Shield-blue)](LICENSE)
+
 Copyright 2026ff [novatechflow](https://www.novatechflow.com) (Alexander Alten). See `LICENSE`.
 
 LAN dashboard for Polymarket binary trading. Left column is the live book
