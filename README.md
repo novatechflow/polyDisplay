@@ -1,152 +1,108 @@
 # polyDisplay
 
-Copyright 2026ff novatechflow (Alexander Alten). Licensed under PolyForm Shield 1.0.0. See `LICENSE`.
+Copyright 2026ff [novatechflow](https://www.novatechflow.com) (Alexander Alten). PolyForm Shield 1.0.0. See `LICENSE`.
 
-A LAN **dashboard for agentic binary trading** on Polymarket: the live book
-(positions, PnL) plus charts for a mix of trading and monitoring assets. The
-watchlist is not hardcoded — `server.go` reads `POLYDISPLAY_ASSETS` from the
-process env or `.env` (see `.env.example`). The display is a split-screen
-**web app** for any browser (phones, tablets, desktops). A small Go server on
-the internal network serves the page and does all outbound API work. The
-browser never talks to Polymarket, Binance, or CoinGecko itself.
-
-- **Left** — live Polymarket positions for a wallet (PnL, size, prices).
-- **Right** — watchlist prices and candlestick charts (trading + monitoring).
-
-No native app, no App Store, no AppCache. The page is a normal document with
-`Cache-Control: no-cache`, so a reload always gets the current build. Colors
-follow the device: dark stays on the current palette, light inverts it.
+LAN dashboard for Polymarket binary trading. Left column is the live book
+(positions, PnL). Right column is charts for a mix of trading and monitoring
+assets. A Go process on the host serves the page and talks to Polymarket,
+Binance, and CoinGecko. Browsers only talk to that process.
 
 ```
- ┌────────────┐   LAN http    ┌─────────────────────────────┐   https
- │  any pad / │ ────────────► │  polydisplayd (Go)          │ ──► Polymarket
- │  browser   │  /api/state   │   • polls + caches          │ ──► Binance
- │            │ ◄──────────── │   • serves the web page     │ ──► CoinGecko
- └────────────┘   one JSON    │   • /api/config, /api/search│
+ ┌────────────┐   http          ┌─────────────────────────────┐   https
+ │  pad /     │ ────────────► │  polydisplayd (Go)          │ ──► Polymarket
+ │  browser   │  /api/state   │   polls + caches            │ ──► Binance
+ │            │ ◄──────────── │   serves the page           │ ──► CoinGecko
+ └────────────┘               │   /api/config, /api/search  │
                               └─────────────────────────────┘
 ```
 
-## Why a server (and the tradeoff)
+The watchlist is not compiled in. `server.go` reads `POLYDISPLAY_ASSETS` from
+the process env or `.env` (see `.env.example`). Default listen port is 8080
+(`POLYDISPLAY_PORT`). Dark/light follows the device. The page is a normal
+document (`Cache-Control: no-cache`), not AppCache.
 
-Hitting those APIs from every display hits CoinGecko's free rate limit and
-Binance's geoblock. The server fetches once, caches, and spaces requests, so
-every client stays fast. **Tradeoff:** the display needs this host awake on the
-LAN. The binary cross-compiles for a Raspberry Pi unchanged
-(`GOOS=linux GOARCH=arm64 go build`) if you want a dedicated always-on box.
+## Install (macOS / Linux)
 
-## Files
+```bash
+./install.sh
+```
 
-| File | Purpose |
-|------|---------|
-| `server.go` | The aggregator + static web server + config/search API. |
-| `index.html` | The web app (consumes `/api/state`). Always loaded fresh from the server. |
-| `config.json` | Wallet, candle range, port; optional watchlist override after ⚙ save. |
-| `.env.example` | Template for `POLYDISPLAY_ASSETS` and `POLYDISPLAY_PORT` (copy to `.env`). |
-| `install.sh` | Checks/downloads Go, builds, asks for the Polymarket address, installs a login service (macOS, Linux). |
-| `install-macos.sh` | Wrapper that runs `install.sh`. |
-| `com.novatechflow.polydisplay.plist` | LaunchAgent template (filled in by the installer on macOS). |
-| `LICENSE` | PolyForm Shield 1.0.0. |
+Downloads Go if needed, asks for a Polymarket public address (`0x...`), writes
+`config.json`, builds `polydisplayd`, and installs a login service: LaunchAgent
+on macOS, systemd user unit on Linux. At the prompt you can add extra tickers;
+those are looked up on CoinGecko. Binance is used at runtime when a USDT pair
+exists, otherwise CoinGecko.
 
-## Run it
+```bash
+POLYMARKET_WALLET=0x... POLYDISPLAY_EXTRA_ASSETS=FLR,HBAR ./install.sh
+```
 
-**Quick dev run:**
+On macOS the agent starts at login. For a box that should come back after
+reboot, turn on automatic login. The installer ad-hoc codesigns the binary and
+adds a firewall exception if the firewall is on.
+
+Dev without installing a service:
+
 ```bash
 go run .
 ```
 
-**Install as an auto-starting background service (recommended):**
+## Docker
+
+Same image on Linux, macOS, and Windows. No Go toolchain on the host.
+
 ```bash
-./install.sh
+test -f .env || cp .env.example .env
+touch config.json
+docker build -t polydisplay .
+docker run --rm -p 8080:8080 --env-file .env -v "$PWD/config.json:/app/config.json" polydisplay
 ```
-Works on macOS and Linux. If `go` is missing (or older than `go.mod`), the
-script downloads an official toolchain into `.go/` in this directory. It then
-asks for your Polymarket **public** address (`0x…`), writes it to
-`config.json`, builds, and installs a login service:
 
-- **macOS** — LaunchAgent (`RunAtLoad` + `KeepAlive`), ad-hoc codesign, firewall exception if the firewall is on.
-- **Linux** — systemd user unit (`~/.config/systemd/user/polydisplay.service`).
+`touch config.json` before the first run so Docker mounts a file, not a
+directory.
 
-Non-interactive: `POLYMARKET_WALLET=0x… ./install.sh`.
+## Open it
 
-`./install-macos.sh` still works; it calls `install.sh`.
+On the LAN: `http://<host-ip>:8080` (or `POLYDISPLAY_PORT`).
 
-**On reboot (macOS):** a LaunchAgent starts at *login*, so for an unattended
-reboot enable **automatic login** (System Settings → Users & Groups). The
-ad-hoc codesign + firewall exception mean no "accept incoming connections?"
-dialog on startup. (For pre-login start you'd need a LaunchDaemon, which
-requires `sudo`.)
+On a public VM, put Caddy in front as an HTTPS reverse proxy to that port
+(`localhost:8080` by default).
 
-Watchlist: `.env.example` is the four Polymarket-traded names (BTC, ETH, SOL,
-XRP). `install.sh` copies that to `.env`, then asks for extra tickers. Each
-extra is looked up on **CoinGecko** (id + name). If Binance has `SYMUSDT`, the
-live server uses Binance for price/candles; if not (FLR, some memecoins, …),
-it already falls back to CoinGecko — you do not need a Binance pair. Format
-`SYM:Name:coingecko-id`. Restart after editing `.env`. If ⚙ has saved a
-watchlist into `config.json`, that list wins until you remove `coins` from
-the file.
+### Pad home screen
 
-Non-interactive extras: `POLYDISPLAY_EXTRA_ASSETS=FLR,HBAR,POND ./install.sh`.
+iPad Safari: Share, then Add to Home Screen (or Add to Dock). Open the icon
+for fullscreen. Drag it onto the Dock if it landed on the home screen.
 
-Listen port: `POLYDISPLAY_PORT` in `.env` (default **8080**). `config.json` `port` is the fallback if the env is unset.
+Android Chrome: menu, Add to Home screen. On plain `http://` this is usually a
+shortcut, not a standalone app.
 
-Optional: for higher CoinGecko limits, set `CG_DEMO_KEY` in `.env` or the plist.
+Keep the pad on a charger. Turn Auto-Lock off if it should stay up. On iPad,
+Guided Access (Settings, Accessibility) can lock the device to that icon.
 
-## Refreshing
+## Config
 
-The page is always fetched fresh from the server, so it can't get stuck on an
-old build. To force a reload: **pull down** at the top of either column
-(touch), or open **⚙ → Reload · clear cache**, or use the browser's reload.
+Watchlist: `POLYDISPLAY_ASSETS` in `.env`. The example is BTC, ETH, SOL, XRP.
+Format `SYM:Name:coingecko-id`. Restart after edits. Extra tokens later: ⚙
+search, or run `./install.sh` again and add them at the prompt.
 
-## Open it on the LAN
+Port: `POLYDISPLAY_PORT` in `.env`, else `config.json` `port`, else 8080.
+Wallet and candle range: ⚙ or `config.json`. Optional `CG_DEMO_KEY` in `.env`
+for a higher CoinGecko rate limit.
 
-1. Find the host's LAN IP, e.g. `ipconfig getifaddr en0` (macOS) → `192.168.4.201`.
-2. On any pad or browser, open `http://192.168.4.201:8080` (or whatever `POLYDISPLAY_PORT` is).
+If ⚙ has saved a `coins` list into `config.json`, that list wins until you
+delete the `coins` key. `config.json` and `.env` are gitignored.
 
-On a public VM, put Caddy in front as an HTTPS reverse proxy to that port (`localhost:8080` by default).
+## Data
 
-## Add it to the pad as a web app
+Candles and prices: Binance when a USDT pair exists, otherwise CoinGecko.
+Positions: Polymarket data-api.
 
-The page is built to run fullscreen from a home-screen / dock icon (no browser
-chrome). Open it in the pad's browser first, then pin it:
+`GET /api/state`, `GET|POST /api/config`, `GET /api/search?q=`.
 
-**iPad (Safari)**
-1. Tap **Share** (square with an arrow).
-2. Tap **Add to Home Screen**, or **Add to Dock** if the sheet offers it.
-3. Name it `polyDisplay` → **Add**.
-4. Open it from that icon — it launches fullscreen, not as a Safari tab.
-5. If it landed on the home screen, hold the icon and drag it onto the **Dock**.
-
-**Android pad (Chrome)**
-1. Tap **⋮** (top right).
-2. Tap **Add to Home screen** or **Install app**.
-3. Confirm. Open from the new icon.
-
-On a plain `http://` LAN address, Android usually pins a shortcut (still the
-same page). iPad Safari still opens it as a standalone web app.
-
-Leave the pad on a charger and turn **Auto-Lock** off if it should stay up.
-On iPad, Guided Access (Settings → Accessibility) can lock the device to that
-icon.
-
-## Configure
-
-The installer stores the Polymarket public address and seeds `.env` with BTC,
-ETH, SOL, and XRP. It then asks for extra assets to chart and resolves them
-through CoinGecko. Open **⚙** later to change the wallet, candle range
-(1/7/14/30d), or add/remove tokens via the same search. Saving writes
-`config.json` on the server and reloads.
-
-## Data sources & notes
-
-- Candles: **Binance klines** when reachable, else **CoinGecko OHLC** — each
-  chart is tagged with the source it's actually using.
-- Prices: Binance ticker when the pair exists, else a CoinGecko price cached
-  on the slow loop.
-- Positions: Polymarket `data-api`. (No price lines on the Polymarket side.)
-- Endpoints: `GET /api/state`, `GET|POST /api/config`, `GET /api/search?q=`.
+Pull down at the top of a column, or ⚙ then Reload, to fetch a fresh page.
 
 ## License
 
-Copyright 2026ff novatechflow (Alexander Alten).
+Copyright 2026ff [novatechflow](https://www.novatechflow.com) (Alexander Alten).
 
-polyDisplay is licensed under the [PolyForm Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0). You may run, change, and share it, including for internal use. You may not provide a product that competes with it — including a paid or hosted service that is a practical substitute. Full terms are in `LICENSE`.
+polyDisplay is licensed under the [PolyForm Shield License 1.0.0](https://polyformproject.org/licenses/shield/1.0.0). You may run, change, and share it, including for internal use. You may not provide a product that competes with it, including a paid or hosted service that is a practical substitute. Full terms are in `LICENSE`.

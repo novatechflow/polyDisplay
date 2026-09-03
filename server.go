@@ -9,7 +9,7 @@
 // touches an external API, cert, rate limit, or geoblock.
 //
 //	go run .            # dev
-//	go build -o polydisplayd .   # binary for launchd (see install-macos.sh)
+//	go build -o polydisplayd .   # binary for launchd / systemd (see install.sh)
 //
 // Optional: CG_DEMO_KEY (CoinGecko). Watchlist: POLYDISPLAY_ASSETS in the
 // process env or a .env file in the working directory (see .env.example).

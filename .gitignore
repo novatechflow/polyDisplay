@@ -8,7 +8,7 @@
 /.go/
 # runtime logs
 *.log
-# live kiosk state — never commit (wallet, local watchlist)
+# live kiosk state (wallet, local watchlist). never commit.
 /config.json
 # local env (copy from .env.example); POLYDISPLAY_ASSETS lives here
 /.env

@@ -1,0 +1,9 @@
+# Copyright 2026ff novatechflow (Alexander Alten)
+# SPDX-License-Identifier: PolyForm-Shield-1.0.0
+.git
+config.json
+.env
+polydisplayd
+polydisplay
+.go
+*.log

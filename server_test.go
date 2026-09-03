@@ -392,7 +392,7 @@ func TestLicenseHeaders(t *testing.T) {
 }
 
 func TestInstallScriptSyntax(t *testing.T) {
-	for _, sh := range []string{"install.sh", "install-macos.sh"} {
+	for _, sh := range []string{"install.sh"} {
 		out, err := exec.Command("bash", "-n", sh).CombinedOutput()
 		if err != nil {
 			t.Errorf("%s: bash -n: %v\n%s", sh, err, out)
