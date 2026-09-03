@@ -53,7 +53,6 @@ func defaultConfig() Config {
 	return Config{
 		Wallet:     "",
 		CandleDays: 1,
-		Port:       8080,
 		Sort:       "trades",
 	}
 }
@@ -122,6 +121,19 @@ func coinsFromEnv() []Coin {
 	return parseAssets(os.Getenv("POLYDISPLAY_ASSETS"))
 }
 
+// POLYDISPLAY_PORT wins; else config.json; else 8080.
+func listenPort(file int) int {
+	if s := strings.TrimSpace(os.Getenv("POLYDISPLAY_PORT")); s != "" {
+		if p, err := strconv.Atoi(s); err == nil && p > 0 && p < 65536 {
+			return p
+		}
+	}
+	if file > 0 {
+		return file
+	}
+	return 8080
+}
+
 func loadConfig() Config {
 	c := defaultConfig()
 	b, err := os.ReadFile(configPath)
@@ -130,9 +142,7 @@ func loadConfig() Config {
 	} else if json.Unmarshal(b, &c) != nil {
 		c = defaultConfig()
 	}
-	if c.Port == 0 {
-		c.Port = 8080
-	}
+	c.Port = listenPort(c.Port)
 	if c.CandleDays == 0 {
 		c.CandleDays = 7
 	}

@@ -41,7 +41,7 @@ LAN. The binary cross-compiles for a Raspberry Pi unchanged
 | `server.go` | The aggregator + static web server + config/search API. |
 | `index.html` | The web app (consumes `/api/state`). Always loaded fresh from the server. |
 | `config.json` | Wallet, candle range, port; optional watchlist override after ⚙ save. |
-| `.env.example` | Template for `POLYDISPLAY_ASSETS` (copy to `.env`). |
+| `.env.example` | Template for `POLYDISPLAY_ASSETS` and `POLYDISPLAY_PORT` (copy to `.env`). |
 | `install.sh` | Checks/downloads Go, builds, asks for the Polymarket address, installs a login service (macOS, Linux). |
 | `install-macos.sh` | Wrapper that runs `install.sh`. |
 | `com.novatechflow.polydisplay.plist` | LaunchAgent template (filled in by the installer on macOS). |
@@ -87,6 +87,8 @@ the file.
 
 Non-interactive extras: `POLYDISPLAY_EXTRA_ASSETS=FLR,HBAR,POND ./install.sh`.
 
+Listen port: `POLYDISPLAY_PORT` in `.env` (default **8080**). `config.json` `port` is the fallback if the env is unset.
+
 Optional: for higher CoinGecko limits, set `CG_DEMO_KEY` in `.env` or the plist.
 
 ## Refreshing
@@ -98,7 +100,9 @@ old build. To force a reload: **pull down** at the top of either column
 ## Open it on the LAN
 
 1. Find the host's LAN IP, e.g. `ipconfig getifaddr en0` (macOS) → `192.168.4.201`.
-2. On any pad or browser, open `http://192.168.4.201:8080`.
+2. On any pad or browser, open `http://192.168.4.201:8080` (or whatever `POLYDISPLAY_PORT` is).
+
+On a public VM, put Caddy in front as an HTTPS reverse proxy to that port (`localhost:8080` by default).
 
 ## Add it to the pad as a web app
 

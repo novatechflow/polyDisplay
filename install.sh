@@ -262,8 +262,9 @@ else:
     cfg = {}
 cfg["wallet"] = wallet
 cfg.setdefault("candleDays", 1)
-cfg.setdefault("port", 8080)
 cfg.setdefault("sort", "trades")
+if not cfg.get("port"):
+    cfg.pop("port", None)
 # coins stay out of config unless already set — POLYDISPLAY_ASSETS in .env is the list
 if not cfg.get("coins"):
     cfg.pop("coins", None)
@@ -338,7 +339,24 @@ lan_ip() {
 }
 
 port() {
-  py -c 'import json;print(json.load(open("'"$DIR"'/config.json")).get("port",8080))' 2>/dev/null || echo 8080
+  if [ -n "${POLYDISPLAY_PORT:-}" ]; then echo "$POLYDISPLAY_PORT"; return; fi
+  py - "$DIR/.env" "$DIR/config.json" <<'PY' 2>/dev/null || echo 8080
+import os, json, sys
+env_path, cfg_path = sys.argv[1], sys.argv[2]
+if os.path.exists(env_path):
+    for line in open(env_path):
+        line = line.strip()
+        if line.startswith("POLYDISPLAY_PORT="):
+            v = line.split("=", 1)[1].strip().strip('"').strip("'")
+            if v.isdigit() and int(v) > 0:
+                print(v)
+                raise SystemExit
+try:
+    p = json.load(open(cfg_path)).get("port") or 0
+    print(int(p) if p else 8080)
+except Exception:
+    print(8080)
+PY
 }
 
 os_arch

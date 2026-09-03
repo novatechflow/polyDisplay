@@ -294,6 +294,24 @@ func TestParseAssets(t *testing.T) {
 	}
 }
 
+func TestListenPort(t *testing.T) {
+	t.Setenv("POLYDISPLAY_PORT", "")
+	if p := listenPort(0); p != 8080 {
+		t.Errorf("empty env, no file: %d, want 8080", p)
+	}
+	if p := listenPort(9090); p != 9090 {
+		t.Errorf("empty env, file 9090: %d", p)
+	}
+	t.Setenv("POLYDISPLAY_PORT", "3000")
+	if p := listenPort(9090); p != 3000 {
+		t.Errorf("env 3000 should win over file, got %d", p)
+	}
+	t.Setenv("POLYDISPLAY_PORT", "nope")
+	if p := listenPort(0); p != 8080 {
+		t.Errorf("bad env: %d, want 8080", p)
+	}
+}
+
 func TestCoinsFromEnv(t *testing.T) {
 	t.Setenv("POLYDISPLAY_ASSETS", "SOL:Solana:solana,XRP:XRP:ripple")
 	got := coinsFromEnv()
