@@ -16,10 +16,8 @@ Binance, and CoinGecko. Browsers only talk to that process.
                               └─────────────────────────────┘
 ```
 
-The watchlist is not compiled in. `server.go` reads `POLYDISPLAY_ASSETS` from
-the process env or `.env` (see `.env.example`). Default listen port is 8080
-(`POLYDISPLAY_PORT`). Dark/light follows the device. The page is a normal
-document (`Cache-Control: no-cache`), not AppCache.
+`server.go` reads `POLYDISPLAY_ASSETS` from the process env or `.env` (see `.env.example`). 
+Default listen port is 8080 (`POLYDISPLAY_PORT`), dark/light theme follows the device;s default mode. 
 
 ## Install (macOS / Linux)
 
