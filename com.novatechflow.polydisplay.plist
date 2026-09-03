@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
+  Copyright 2026ff novatechflow (Alexander Alten)
+  SPDX-License-Identifier: PolyForm-Shield-1.0.0
+
   Template LaunchAgent for the polyDisplay server.
   Do not use directly - run ./install-macos.sh, which fills in __BIN__/__DIR__
   with real paths and installs this to ~/Library/LaunchAgents/.

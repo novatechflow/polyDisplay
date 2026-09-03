@@ -6,18 +6,29 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="polyDisplay">
+<meta name="theme-color" content="#0b0e13" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)">
 <title>polyDisplay</title>
 <!--
-  polyDisplay - kiosk dashboard for an old iPad (iOS 10.3.3)
-  The iPad talks ONLY to the local Go server (/api/*): it aggregates
-  Polymarket positions + crypto prices/candles (Binance-first, CoinGecko
-  fallback) so the iPad never hits an external API, rate limit, or geoblock.
-  Left : Polymarket positions   Right: token watchlist + 7d candlesticks
+  Copyright 2026ff novatechflow (Alexander Alten)
+  SPDX-License-Identifier: PolyForm-Shield-1.0.0
+
+  polyDisplay - LAN web app: Polymarket positions + crypto watchlist.
+  The browser talks ONLY to the local Go server (/api/*): it aggregates
+  Polymarket + crypto (Binance-first, CoinGecko fallback) so the display
+  never hits an external API, rate limit, or geoblock.
 -->
 <style>
-  :root{--bg:#0b0e13;--panel:#141922;--panel2:#1b2230;--line:#232c3b;--text:#e6ecf5;
+  :root{color-scheme:dark;--bg:#0b0e13;--panel:#141922;--panel2:#1b2230;--line:#232c3b;--text:#e6ecf5;
         --muted:#8a97a8;--green:#34d399;--red:#f77;--accent:#5b8cff;
-        --buy:#7aa2ff;--yes:#a78bfa;--no:#4fc3d9;}
+        --buy:#7aa2ff;--yes:#a78bfa;--no:#4fc3d9;
+        --scrim:rgba(11,14,19,.55);--overlay:rgba(0,0,0,.6);}
+  @media (prefers-color-scheme:light){
+    :root{color-scheme:light;--bg:#eef1f6;--panel:#fff;--panel2:#f5f7fb;--line:#d0d7e3;--text:#1c2433;
+          --muted:#5a6a7e;--green:#0f9f6e;--red:#d94848;--accent:#3b6fe0;
+          --buy:#3b6fe0;--yes:#6d4db3;--no:#1a8fa3;
+          --scrim:rgba(238,241,246,.78);--overlay:rgba(20,28,40,.35);}
+  }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   html,body{margin:0;padding:0;height:100%;background:var(--bg);color:var(--text);
     font-family:-apple-system,"Helvetica Neue",Helvetica,Arial,sans-serif;
@@ -61,9 +72,9 @@
   .chart{width:100%;display:block;}
   .chartwrap{position:relative;margin-top:8px;}
   .yhi,.ylo{position:absolute;font-size:9px;color:var(--muted);white-space:nowrap;
-    font-family:"SF Mono",Menlo,Monaco,monospace;background:rgba(11,14,19,.55);
+    font-family:"SF Mono",Menlo,Monaco,monospace;background:var(--scrim);
     padding:0 3px;border-radius:3px;pointer-events:none;transform:translateX(-50%);}
-  .ylast{position:absolute;left:3px;font-size:9px;color:var(--accent);background:rgba(11,14,19,.65);
+  .ylast{position:absolute;left:3px;font-size:9px;color:var(--accent);background:var(--scrim);
     padding:0 3px;border-radius:3px;pointer-events:none;font-family:"SF Mono",Menlo,Monaco,monospace;}
   .xaxis{display:flex;justify-content:space-between;font-family:"SF Mono",Menlo,Monaco,monospace;
     font-size:9px;color:var(--muted);padding:2px 1px 0;}
@@ -91,7 +102,7 @@
   footer{flex:0 0 auto;padding:6px 16px;font-size:11px;color:var(--muted);border-top:1px solid var(--line);
     display:flex;justify-content:space-between;}
 
-  .modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.6);z-index:10;}
+  .modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:var(--overlay);z-index:10;}
   .modal.show{display:flex;align-items:center;justify-content:center;}
   .sheet{background:var(--panel2);border:1px solid var(--line);border-radius:14px;width:520px;max-width:92%;
     max-height:88%;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:18px 20px;}
@@ -174,7 +185,7 @@
 <script>
 /* the page is served BY the Go server, so the API is same-origin */
 var API = "";                 // e.g. set to "http://192.168.4.201:8080" to point elsewhere
-var POLL = 10000;             // how often the iPad asks the server for fresh state
+var POLL = 10000;             // how often the page asks the server for fresh state
 
 function $(id){ return document.getElementById(id); }
 function p2(x){ return (x<10?"0":"")+x; }
@@ -279,7 +290,7 @@ function candleChart(data,w,h,m){
   var s='<svg class="chart" viewBox="0 0 '+w+' '+h+'" height="'+h+'" preserveAspectRatio="none">';
   for(var j=0;j<n;j++){
     var o=data[j][1],high=data[j][2],low=data[j][3],c=data[j][4];
-    var x=j*cw+cw/2, up=c>=o, col=up?"#34d399":"#f77";
+    var x=j*cw+cw/2, up=c>=o, col=up?"var(--green)":"var(--red)";
     s+='<line x1="'+x.toFixed(1)+'" y1="'+Y(high).toFixed(1)+'" x2="'+x.toFixed(1)+'" y2="'+Y(low).toFixed(1)+'" stroke="'+col+'" stroke-width="1"/>';
     var yo=Y(o),yc=Y(c),top=Math.min(yo,yc),bh=Math.max(1,Math.abs(yo-yc));
     s+='<rect x="'+(x-bw/2).toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+bh.toFixed(1)+'" fill="'+col+'"/>';
@@ -287,20 +298,20 @@ function candleChart(data,w,h,m){
   var pv=swingPivots(data,pivotK(n)), dr=Math.max(1,cw*0.3);
   for(var q=0;q<pv.highs.length;q++) s+=pivotDot(chartX(m,pv.highs[q],w),Y(data[pv.highs[q]][2])-2,dr);
   for(var r=0;r<pv.lows.length;r++)  s+=pivotDot(chartX(m,pv.lows[r],w), Y(data[pv.lows[r]][3])+2,dr);
-  s+=channelLine(m,pv.highs,function(i){return data[i][2];},w,h,"#8a97a8");
-  s+=channelLine(m,pv.lows, function(i){return data[i][3];},w,h,"#8a97a8");
+  s+=channelLine(m,pv.highs,function(i){return data[i][2];},w,h,"var(--muted)");
+  s+=channelLine(m,pv.lows, function(i){return data[i][3];},w,h,"var(--muted)");
   /* ticks on the candles that made the window high and low */
   var tw=Math.max(5,cw*1.6);
   s+=extremeTick(chartX(m,m.iHi,w),Y(m.hi),tw);
   s+=extremeTick(chartX(m,m.iLo,w),Y(m.lo),tw);
   var yl=Y(m.spot);
-  s+='<line x1="0" y1="'+yl.toFixed(1)+'" x2="'+w+'" y2="'+yl.toFixed(1)+'" stroke="#5b8cff" stroke-width="0.8" stroke-dasharray="4,3" opacity="0.8"/>';
+  s+='<line x1="0" y1="'+yl.toFixed(1)+'" x2="'+w+'" y2="'+yl.toFixed(1)+'" stroke="var(--accent)" stroke-width="0.8" stroke-dasharray="4,3" opacity="0.8"/>';
   return s+'</svg>';
 }
 /* rect, not circle - preserveAspectRatio="none" would stretch it to an ellipse */
 function pivotDot(x,y,rx){
   return '<rect x="'+(x-rx).toFixed(1)+'" y="'+(y-1).toFixed(1)+'" width="'+(rx*2).toFixed(1)+
-         '" height="2" fill="#8a97a8" opacity="0.45"/>';
+         '" height="2" fill="var(--muted)" opacity="0.45"/>';
 }
 /* least-squares line through every pivot on one side, so it spans the whole
    period instead of hanging off the last two swings, clipped to the plot */
@@ -326,7 +337,7 @@ function channelLine(m,idx,valAt,w,h,col){
 }
 function extremeTick(x,y,tw){
   return '<line x1="'+(x-tw/2).toFixed(1)+'" y1="'+y.toFixed(1)+'" x2="'+(x+tw/2).toFixed(1)+
-         '" y2="'+y.toFixed(1)+'" stroke="#8a97a8" stroke-width="1" opacity="0.85"/>';
+         '" y2="'+y.toFixed(1)+'" stroke="var(--muted)" stroke-width="1" opacity="0.85"/>';
 }
 
 function padR(s,n){ s=String(s); while(s.length<n) s+=" "; return s; }

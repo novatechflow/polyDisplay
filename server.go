@@ -1,8 +1,11 @@
+// Copyright 2026ff novatechflow (Alexander Alten)
+// SPDX-License-Identifier: PolyForm-Shield-1.0.0
+//
 // polyDisplay aggregator server.
 //
 // Polls Polymarket + (Binance-first, CoinGecko-fallback) on its own schedule,
 // caches the result, and serves ONE cheap endpoint (/api/state) plus the static
-// web app to the iPad. The iPad therefore makes a single local request and never
+// web app. The browser therefore makes a single LAN request and never
 // touches an external API, cert, rate limit, or geoblock.
 //
 //	go run .            # dev
@@ -790,7 +793,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
-// proxy CoinGecko search so the iPad never calls out directly
+// proxy CoinGecko search so the browser never calls out directly
 func handleSearch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	q := r.URL.Query().Get("q")
@@ -837,10 +840,6 @@ func main() {
 
 	fs := http.FileServer(http.Dir("."))
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// AppCache manifest needs the right MIME type on iOS
-		if len(r.URL.Path) >= 9 && r.URL.Path[len(r.URL.Path)-9:] == ".appcache" {
-			w.Header().Set("Content-Type", "text/cache-manifest")
-		}
 		w.Header().Set("Cache-Control", "no-cache")
 		fs.ServeHTTP(w, r)
 	}))

@@ -1,9 +1,12 @@
+// Copyright 2026ff novatechflow (Alexander Alten)
+// SPDX-License-Identifier: PolyForm-Shield-1.0.0
 package main
 
 import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -266,6 +269,57 @@ func TestRefreshFastSkipsPolymarketWithoutWallet(t *testing.T) {
 	}
 	if state.Wallet != "" || state.Note != "" {
 		t.Errorf("wallet=%q note=%q, want both empty", state.Wallet, state.Note)
+	}
+}
+
+func TestLicenseHeaders(t *testing.T) {
+	out, err := exec.Command("git", "ls-files").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	notice := "Copyright 2026ff novatechflow (Alexander Alten)"
+	for _, path := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if path == "" {
+			continue
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("%s: %v", path, err)
+			continue
+		}
+		if !strings.Contains(string(b), notice) {
+			t.Errorf("%s: missing %q", path, notice)
+		}
+	}
+}
+
+func TestAutoThemeFollowsColorScheme(t *testing.T) {
+	b, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, "prefers-color-scheme:light") && !strings.Contains(s, "prefers-color-scheme: light") {
+		t.Error("index.html missing prefers-color-scheme light palette")
+	}
+	if !strings.Contains(s, "--bg:#0b0e13") {
+		t.Error("dark default palette missing")
+	}
+	if !strings.Contains(s, `col=up?"var(--green)":"var(--red)"`) {
+		t.Error("candles must use theme variables, not hardcoded colors")
+	}
+}
+
+func TestNoAppCacheManifest(t *testing.T) {
+	b, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `manifest=`) {
+		t.Error("index.html must not set an AppCache manifest")
+	}
+	if _, err := os.Stat("polydisplay.appcache"); err == nil {
+		t.Error("must not ship an .appcache file")
 	}
 }
 

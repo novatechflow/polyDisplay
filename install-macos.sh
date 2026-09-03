@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright 2026ff novatechflow (Alexander Alten)
+# SPDX-License-Identifier: PolyForm-Shield-1.0.0
 # Build the polyDisplay server and install it as a macOS LaunchAgent so it
 # starts automatically at login and restarts if it ever crashes.
 set -euo pipefail
@@ -40,7 +42,7 @@ IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null |
 PORT="$(python3 -c 'import json;print(json.load(open("'"$DIR"'/config.json")).get("port",8080))' 2>/dev/null || echo 8080)"
 echo
 echo "polyDisplay is running and will auto-start at login."
-echo "  On the iPad, open:  http://$IP:$PORT"
+echo "  On a pad or browser: http://$IP:$PORT"
 echo "  Logs:               $DIR/polydisplay.log"
 echo "  Stop:               launchctl unload $PLIST"
 echo "  Update after edits:  re-run ./install-macos.sh"
