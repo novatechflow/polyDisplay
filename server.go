@@ -21,6 +21,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -811,12 +812,10 @@ func handleState(w http.ResponseWriter, r *http.Request) {
 	b, _ := json.Marshal(state)
 	mu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Write(b)
 }
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if r.Method == "POST" {
 		var nc Config
 		if err := json.NewDecoder(r.Body).Decode(&nc); err != nil {
@@ -859,7 +858,6 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 // proxy CoinGecko search so the browser never calls out directly
 func handleSearch(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		w.Write([]byte("[]"))
@@ -872,7 +870,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 			Name   string `json:"name"`
 		} `json:"coins"`
 	}
-	if err := getJSON("https://api.coingecko.com/api/v3/search?query="+q, &raw, cgHeaders()); err != nil {
+	if err := getJSON("https://api.coingecko.com/api/v3/search?query="+url.QueryEscape(q), &raw, cgHeaders()); err != nil {
 		http.Error(w, "[]", 200)
 		return
 	}
@@ -894,6 +892,10 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 func staticHandler() http.Handler {
 	fs := http.FileServer(http.Dir("."))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if blockedStatic(r.URL.Path) {
+			http.NotFound(w, r)
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, ".webmanifest") {
 			w.Header().Set("Content-Type", "application/manifest+json")
 		}
@@ -903,16 +905,19 @@ func staticHandler() http.Handler {
 }
 
 func main() {
+	setupLogging()
 	loadEnvFile(envPath)
 	cfg = loadConfig()
-	log.Printf("polyDisplay: %d assets, wallet %s, port %d", len(cfg.Coins), cfg.Wallet, cfg.Port)
+	log.Printf("polyDisplay: %d assets, port %d, pin-auth=%v", len(cfg.Coins), cfg.Port, authEnabled())
 
 	go loops()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/state", handleState)
-	mux.HandleFunc("/api/config", handleConfig)
-	mux.HandleFunc("/api/search", handleSearch)
+	mux.HandleFunc("/api/auth/pin", handleAuthPin)
+	mux.HandleFunc("/api/auth/refresh", handleAuthRefresh)
+	mux.HandleFunc("/api/state", requireAccess(handleState))
+	mux.HandleFunc("/api/config", requireAccess(handleConfig))
+	mux.HandleFunc("/api/search", requireAccess(handleSearch))
 
 	mux.Handle("/", staticHandler())
 

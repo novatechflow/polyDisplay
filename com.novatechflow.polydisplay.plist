@@ -31,10 +31,12 @@
   <true/>
   <key>KeepAlive</key>
   <true/>
+  <!-- App logs go to polydisplay.log (rotated in-process). These fds are
+       only panics / caffeinate noise, so they must not hold polydisplay.log. -->
   <key>StandardOutPath</key>
-  <string>__DIR__/polydisplay.log</string>
+  <string>/dev/null</string>
   <key>StandardErrorPath</key>
-  <string>__DIR__/polydisplay.log</string>
+  <string>/dev/null</string>
   <key>EnvironmentVariables</key>
   <dict>
     <!-- optional: paste a free CoinGecko demo key for higher rate limits -->

@@ -428,6 +428,8 @@ func TestInstallScriptSyntax(t *testing.T) {
 		"https://go.dev/dl/",
 		".env.example",
 		"POLYDISPLAY_ASSETS",
+		"POLYDISPLAY_PIN",
+		"POLYDISPLAY_TOKEN_SECRET",
 		"POLYDISPLAY_EXTRA_ASSETS",
 		"api.coingecko.com/api/v3/search",
 		"api.binance.com/api/v3/ticker/24hr",

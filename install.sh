@@ -126,6 +126,60 @@ ensure_env() {
   fi
 }
 
+env_get() {
+  py - "$DIR/.env" "$1" <<'PY'
+import re, sys
+path, key = sys.argv[1], sys.argv[2]
+try:
+    text = open(path).read()
+except FileNotFoundError:
+    sys.exit(0)
+m = re.search(r'(?m)^%s=(.*)$' % re.escape(key), text)
+if not m:
+    sys.exit(0)
+print(m.group(1).strip().strip('"').strip("'"))
+PY
+}
+
+env_set() {
+  py - "$DIR/.env" "$1" "$2" <<'PY'
+import re, sys
+path, key, val = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    text = open(path).read()
+except FileNotFoundError:
+    text = ""
+line = "%s=%s" % (key, val)
+m = re.search(r'(?m)^%s=.*$' % re.escape(key), text)
+if m:
+    text = text[:m.start()] + line + text[m.end():]
+elif text and not text.endswith("\n"):
+    text += "\n" + line + "\n"
+else:
+    text += line + "\n"
+open(path, "w").write(text)
+PY
+}
+
+ensure_auth() {
+  local pin sec
+  pin="$(env_get POLYDISPLAY_PIN || true)"
+  if [ -z "$pin" ]; then
+    pin="$(py -c 'import secrets; print("%06d" % secrets.randbelow(1000000))')"
+    env_set POLYDISPLAY_PIN "$pin"
+  fi
+  sec="$(env_get POLYDISPLAY_TOKEN_SECRET || true)"
+  if [ -z "$sec" ]; then
+    sec="$(openssl rand -hex 32 2>/dev/null || py -c 'import secrets; print(secrets.token_hex(32))')"
+    env_set POLYDISPLAY_TOKEN_SECRET "$sec"
+  fi
+  echo
+  echo "Pad PIN (also POLYDISPLAY_PIN in .env — look it up any time):"
+  echo "  $pin"
+  echo "Type it once on the pad. After that the browser keeps a bearer token."
+  echo "Clearing site data on the pad means typing the PIN again."
+}
+
 # CoinGecko search for id+name; Binance ticker tells us if SYM+USDT exists.
 # Prints "SYM:Name:id<TAB>binance|coingecko" or exits non-zero.
 resolve_asset() {
@@ -362,6 +416,7 @@ PY
 os_arch
 ensure_go
 ensure_env
+ensure_auth
 ask_wallet
 ask_assets
 write_config
@@ -376,6 +431,7 @@ PORT="$(port)"
 echo
 echo "polyDisplay is running and will auto-start at login."
 echo "  On a pad or browser: http://$IP:$PORT"
+echo "  Pad PIN:            $(env_get POLYDISPLAY_PIN || true)  (POLYDISPLAY_PIN in .env)"
 echo "  Logs:               $DIR/polydisplay.log"
 echo "  Stop:               $STOP"
 echo "  Update after edits:  re-run $0"

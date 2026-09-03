@@ -108,6 +108,8 @@
     display:flex;justify-content:space-between;}
 
   .modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:var(--overlay);z-index:10;}
+  #pinModal.modal{z-index:30;}
+  #pinInput{letter-spacing:8px;font-size:28px;text-align:center;font-family:"SF Mono",Menlo,Monaco,monospace;}
   .modal.show{display:flex;align-items:center;justify-content:center;}
   .sheet{background:var(--panel2);border:1px solid var(--line);border-radius:14px;width:520px;max-width:92%;
     max-height:88%;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:18px 20px;}
@@ -154,7 +156,7 @@
       <div class="list" id="cxList"><div class="empty">Connecting to server&hellip;</div></div>
     </div>
   </main>
-  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v16 &middot; server</span></footer>
+  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v18 &middot; server</span></footer>
 </div>
 
 <div class="modal" id="modal">
@@ -187,6 +189,18 @@
   </div>
 </div>
 
+<div class="modal" id="pinModal">
+  <div class="sheet" style="width:340px">
+    <h3>Unlock pad</h3>
+    <p class="muted" style="margin:0 0 12px">Six-digit PIN from the install output, or <code>POLYDISPLAY_PIN</code> in the server <code>.env</code>.</p>
+    <input id="pinInput" type="tel" maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="000000">
+    <div id="pinErr" class="muted" style="color:var(--red);margin-top:8px;min-height:1.2em"></div>
+    <div class="btnrow">
+      <button class="btn primary" id="pinBtn">Unlock</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* the page is served BY the Go server, so the API is same-origin */
 var API = "";                 // e.g. set to "http://192.168.4.201:8080" to point elsewhere
@@ -199,7 +213,7 @@ function fmtUsd(n){ if(n==null||isNaN(n))return "-"; var a=Math.abs(n),dp=a>=100
 function fmtSignedUsd(n){ if(n==null||isNaN(n))return "-"; return (n>=0?"+":"-")+fmtUsd(Math.abs(n)); }
 function fmtPct(n){ if(n==null||isNaN(n))return ""; return (n>=0?"+":"")+Number(n).toFixed(2)+"%"; }
 function cls(n){ return n>0?"up":n<0?"down":"flat"; }
-function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 function setDot(id,ok){ $(id).className="dot "+(ok?"ok":"err"); }
 function showErr(msg){ var b=$("errBanner"); if(msg){ b.textContent=msg; b.className="err-banner show"; } else { b.className="err-banner"; } }
 
@@ -402,14 +416,78 @@ function chartWithAxis(data,w,h,days,spot,trendData){
     '</div>';
 }
 
-/* ---------- poll the server ---------- */
-function loadState(){
-  fetch(API+"/api/state",{cache:"no-store"})
-    .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
-    .then(function(s){ setDot("srvDot",true); showErr(s.note||""); render(s); })
-    .catch(function(e){ setDot("srvDot",false); showErr("Server unreachable: "+e.message); })
-    .then(function(){ setTimeout(loadState, POLL); });
+/* ---------- auth: PIN once, then bearer in localStorage ---------- */
+var LS_A="pd_access", LS_R="pd_refresh";
+function getAccess(){ try{ return localStorage.getItem(LS_A)||""; }catch(e){ return ""; } }
+function getRefresh(){ try{ return localStorage.getItem(LS_R)||""; }catch(e){ return ""; } }
+function setTokens(a,r){ try{ if(a) localStorage.setItem(LS_A,a); if(r) localStorage.setItem(LS_R,r); }catch(e){} }
+function clearTokens(){ try{ localStorage.removeItem(LS_A); localStorage.removeItem(LS_R); }catch(e){} }
+function showPin(msg){ $("pinErr").textContent=msg||""; $("pinModal").className="modal show"; }
+function hidePin(){ $("pinModal").className="modal"; }
+
+function refreshTokens(cb){
+  var r=getRefresh();
+  if(!r){ cb(false); return; }
+  fetch(API+"/api/auth/refresh",{method:"POST",headers:{Authorization:"Bearer "+r}})
+    .then(function(res){ if(!res.ok) throw new Error("refresh"); return res.json(); })
+    .then(function(j){ setTokens(j.access_token, j.refresh_token); cb(true); })
+    .catch(function(){ clearTokens(); cb(false); });
 }
+
+function api(path, opts, cb){
+  opts=opts||{};
+  var headers={};
+  if(opts.headers){ for(var k in opts.headers) headers[k]=opts.headers[k]; }
+  var a=getAccess();
+  if(a) headers.Authorization="Bearer "+a;
+  if(opts.json) headers["Content-Type"]="application/json";
+  var o={method:opts.method||"GET", headers:headers, cache:"no-store"};
+  if(opts.body!=null) o.body=opts.body;
+  fetch(API+path, o).then(function(res){
+    if(res.status!==401){ cb(res); return; }
+    refreshTokens(function(ok){
+      if(!ok){ showPin(""); cb(res); return; }
+      a=getAccess();
+      if(a) headers.Authorization="Bearer "+a;
+      o.headers=headers;
+      fetch(API+path, o).then(cb).catch(function(){ cb(null); });
+    });
+  }).catch(function(){ cb(null); });
+}
+
+function submitPin(){
+  var pin=($("pinInput").value||"").replace(/\D/g,"").slice(0,6);
+  $("pinErr").textContent="";
+  fetch(API+"/api/auth/pin",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pin:pin})})
+    .then(function(res){
+      if(res.status===429){ $("pinErr").textContent="Too many tries. Wait a minute."; return null; }
+      if(!res.ok){ $("pinErr").textContent="Wrong PIN. See POLYDISPLAY_PIN in the server .env"; return null; }
+      return res.json();
+    })
+    .then(function(j){
+      if(!j||!j.access_token) return;
+      setTokens(j.access_token, j.refresh_token);
+      hidePin();
+      $("pinInput").value="";
+      pullState(false);
+    })
+    .catch(function(){ $("pinErr").textContent="Server unreachable"; });
+}
+
+/* ---------- poll the server ---------- */
+function pullState(thenPoll){
+  api("/api/state", {}, function(res){
+    if(!res){ setDot("srvDot",false); showErr("Server unreachable"); }
+    else if(res.status===401){ setDot("srvDot",true); showErr(""); }
+    else if(!res.ok){ setDot("srvDot",false); showErr("HTTP "+res.status); }
+    else {
+      res.json().then(function(s){ setDot("srvDot",true); showErr(s.note||""); render(s); })
+        .catch(function(){ setDot("srvDot",false); showErr("Bad state"); });
+    }
+    if(thenPoll) setTimeout(function(){ pullState(true); }, POLL);
+  });
+}
+function loadState(){ pullState(true); }
 
 function render(s){
   var rows=s.positions||[], html="";
@@ -457,14 +535,18 @@ function render(s){
 /* ---------- settings (server config) ---------- */
 var draftCoins=null, draftCfg=null;
 function openSettings(){
-  fetch(API+"/api/config").then(function(r){return r.json();}).then(function(c){
+  api("/api/config", {}, function(res){
+    if(!res||res.status===401){ showPin(""); return; }
+    if(!res.ok){ showErr("Cannot load settings"); return; }
+    res.json().then(function(c){
     draftCfg=c; draftCoins=(c.coins||[]).slice();
     $("walletInput").value=c.wallet||"";
     $("daysSel").value=String(c.candleDays||7);
     $("sortSel").value=c.sort||"trades";
     renderChips(); $("searchInput").value=""; $("results").innerHTML="";
     $("modal").className="modal show";
-  }).catch(function(){ showErr("Cannot load settings (server down?)"); });
+    }).catch(function(){ showErr("Cannot load settings"); });
+  });
 }
 function closeSettings(){ $("modal").className="modal"; draftCoins=null; }
 function renderChips(){
@@ -484,7 +566,9 @@ function onSearch(){
   if(searchTimer)clearTimeout(searchTimer);
   if(!q){ $("results").innerHTML=""; return; }
   searchTimer=setTimeout(function(){
-    fetch(API+"/api/search?q="+encodeURIComponent(q)).then(function(r){return r.json();}).then(function(list){
+    api("/api/search?q="+encodeURIComponent(q), {}, function(res){
+      if(!res||!res.ok){ $("results").innerHTML='<div class="muted">Search failed.</div>'; return; }
+      res.json().then(function(list){
       list=list||[]; var h="";
       for(var i=0;i<list.length;i++){
         h+='<div class="result" data-id="'+esc(list[i].ID)+'" data-sym="'+esc((list[i].Sym||"").toUpperCase())+'" data-name="'+esc(list[i].Name)+'">'+
@@ -499,13 +583,16 @@ function onSearch(){
         renderChips(); $("searchInput").value=""; $("results").innerHTML="";
       }; }
     }).catch(function(){ $("results").innerHTML='<div class="muted">Search failed.</div>'; });
+    });
   },350);
 }
 function saveSettings(){
   var body={ wallet:$("walletInput").value.trim(), candleDays:+$("daysSel").value||7, sort:$("sortSel").value||"trades", coins:draftCoins||[] };
-  fetch(API+"/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
-    .then(function(){ window.location.reload(); })
-    .catch(function(){ showErr("Save failed (server down?)"); });
+  api("/api/config",{method:"POST",json:true,body:JSON.stringify(body)}, function(res){
+    if(!res||res.status===401){ showPin(""); return; }
+    if(!res.ok){ showErr("Save failed"); return; }
+    window.location.reload();
+  });
 }
 // Force a fresh copy: clear any legacy AppCache + localStorage, then reload.
 function purgeAndReload(){
@@ -522,6 +609,8 @@ function purgeAndReload(){
   }
   location.reload();
 }
+$("pinBtn").onclick=submitPin;
+$("pinInput").onkeydown=function(e){ if(e.keyCode===13) submitPin(); };
 $("gearBtn").onclick=openSettings;
 $("cancelBtn").onclick=closeSettings;
 $("saveBtn").onclick=saveSettings;

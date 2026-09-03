@@ -41,6 +41,12 @@ On macOS the agent starts at login. For a box that should come back after
 reboot, turn on automatic login. The installer ad-hoc codesigns the binary and
 adds a firewall exception if the firewall is on.
 
+`install.sh` also writes a random 6-digit `POLYDISPLAY_PIN` (printed at the end,
+always in `.env`) and a `POLYDISPLAY_TOKEN_SECRET`. Open the normal pad URL,
+type the PIN once. The browser keeps a bearer token and refreshes it; `/api/*`
+requires `Authorization: Bearer`. Clearing site data on the pad means typing
+the PIN again. `go run .` without a PIN in `.env` stays open (LAN/dev).
+
 Dev without installing a service:
 
 ```bash
@@ -66,7 +72,9 @@ directory.
 On the LAN: `http://<host-ip>:8080` (or `POLYDISPLAY_PORT`).
 
 On a public VM, put Caddy in front as an HTTPS reverse proxy to that port
-(`localhost:8080` by default).
+(`localhost:8080` by default). Keep the PIN in `.env` so `/api/*` is not
+open to the internet. The pad still uses the plain URL; no token in the
+address bar.
 
 ### Pad home screen
 
@@ -93,6 +101,9 @@ for a higher CoinGecko rate limit.
 
 If ⚙ has saved a `coins` list into `config.json`, that list wins until you
 delete the `coins` key. `config.json` and `.env` are gitignored.
+
+Logs: `polydisplay.log` in the working directory. Rolled at local midnight to
+`polydisplay.log.YYYY-MM-DD`; files older than 5 days are deleted.
 
 ## Data
 
