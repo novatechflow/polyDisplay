@@ -244,7 +244,7 @@ function trendVerdict(data){
   if(H<0&&L>0) return {label:"Coiling",  cls:"flat",why:"lower highs · higher lows"};
   if(H>0||L>0)  return {label:"Uptrend",  cls:"up",  why:whyTrend(H,L,"higher")};
   if(H<0||L<0)  return {label:"Downtrend",cls:"down",why:whyTrend(H,L,"lower")};
-  return {label:"Range",cls:"flat",why:"no clear structure"};
+  return {label:"Neutral",cls:"flat",why:"no clear structure"};
 }
 function whyTrend(H,L,dir){
   if(H&&L) return dir+" highs · "+dir+" lows";
