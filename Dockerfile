@@ -9,6 +9,7 @@ FROM alpine:3.21
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=build /polydisplayd /app/polydisplayd
-COPY index.html /app/index.html
+COPY index.html manifest.webmanifest /app/
+COPY media /app/media
 EXPOSE 8080
 CMD ["/app/polydisplayd"]

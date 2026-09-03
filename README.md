@@ -16,8 +16,10 @@ Binance, and CoinGecko. Browsers only talk to that process.
                               └─────────────────────────────┘
 ```
 
-`server.go` reads `POLYDISPLAY_ASSETS` from the process env or `.env` (see `.env.example`). 
-Default listen port is 8080 (`POLYDISPLAY_PORT`), dark/light theme follows the device;s default mode. 
+![polyDisplay on a pad](media/polyDisplay-live.png)
+
+`server.go` reads `POLYDISPLAY_ASSETS` from the process env or `.env` (see `.env.example`).
+Default listen port is 8080 (`POLYDISPLAY_PORT`). Dark/light follows the device. 
 
 ## Install (macOS / Linux)
 
@@ -70,6 +72,8 @@ On a public VM, put Caddy in front as an HTTPS reverse proxy to that port
 
 iPad Safari: Share, then Add to Home Screen (or Add to Dock). Open the icon
 for fullscreen. Drag it onto the Dock if it landed on the home screen.
+Home-screen icons are `media/icon-180.png` / `192` / `512` (full-bleed square,
+not pre-rounded).
 
 Android Chrome: menu, Add to Home screen. On plain `http://` this is usually a
 shortcut, not a standalone app.

@@ -1,0 +1,23 @@
+{
+  "name": "polyDisplay",
+  "short_name": "polyDisplay",
+  "description": "Copyright 2026ff novatechflow (Alexander Alten)",
+  "display": "standalone",
+  "start_url": "/",
+  "background_color": "#0b0e13",
+  "theme_color": "#0b0e13",
+  "icons": [
+    {
+      "src": "/media/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/media/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

@@ -891,6 +891,17 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 
+func staticHandler() http.Handler {
+	fs := http.FileServer(http.Dir("."))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".webmanifest") {
+			w.Header().Set("Content-Type", "application/manifest+json")
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		fs.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	loadEnvFile(envPath)
 	cfg = loadConfig()
@@ -903,11 +914,7 @@ func main() {
 	mux.HandleFunc("/api/config", handleConfig)
 	mux.HandleFunc("/api/search", handleSearch)
 
-	fs := http.FileServer(http.Dir("."))
-	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-cache")
-		fs.ServeHTTP(w, r)
-	}))
+	mux.Handle("/", staticHandler())
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	log.Printf("listening on http://0.0.0.0%s", addr)

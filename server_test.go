@@ -370,12 +370,26 @@ func TestRefreshFastSkipsPolymarketWithoutWallet(t *testing.T) {
 	}
 }
 
+func binaryLicenseSkip(path string) bool {
+	i := strings.LastIndex(path, ".")
+	if i < 0 {
+		return false
+	}
+	switch strings.ToLower(path[i+1:]) {
+	case "png", "jpg", "jpeg", "gif", "webp", "ico":
+		return true
+	default:
+		return false
+	}
+}
+
 func TestLicenseHeaders(t *testing.T) {
 	out, err := exec.Command("git", "ls-files").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	notice := "Copyright 2026ff novatechflow (Alexander Alten)"
+	plain := "Copyright 2026ff novatechflow (Alexander Alten)"
+	linked := "Copyright 2026ff [novatechflow](https://www.novatechflow.com) (Alexander Alten)"
 	for _, path := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if path == "" {
 			continue
@@ -385,8 +399,12 @@ func TestLicenseHeaders(t *testing.T) {
 			t.Errorf("%s: %v", path, err)
 			continue
 		}
-		if !strings.Contains(string(b), notice) {
-			t.Errorf("%s: missing %q", path, notice)
+		if binaryLicenseSkip(path) {
+			continue
+		}
+		s := string(b)
+		if !strings.Contains(s, plain) && !strings.Contains(s, linked) {
+			t.Errorf("%s: missing copyright notice", path)
 		}
 	}
 }
@@ -450,6 +468,55 @@ func TestAutoThemeFollowsColorScheme(t *testing.T) {
 	}
 	if !strings.Contains(s, `col=up?"var(--green)":"var(--red)"`) {
 		t.Error("candles must use theme variables, not hardcoded colors")
+	}
+}
+
+func TestWebManifestContentType(t *testing.T) {
+	srv := httptest.NewServer(staticHandler())
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/manifest.webmanifest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	ct := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/manifest+json") {
+		t.Errorf("Content-Type=%q, want application/manifest+json", ct)
+	}
+}
+
+func TestPadWebAppIcons(t *testing.T) {
+	b, err := os.ReadFile("manifest.webmanifest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{"/media/icon-192.png", "/media/icon-512.png", `"purpose": "any"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("manifest.webmanifest missing %q", want)
+		}
+	}
+	if strings.Contains(s, "maskable") {
+		t.Error("do not pre-mask icons; the pad rounds a full-bleed square")
+	}
+	html, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := string(html)
+	if !strings.Contains(h, `rel="apple-touch-icon"`) || !strings.Contains(h, "/media/icon-180.png") {
+		t.Error("index.html missing apple-touch-icon 180")
+	}
+	if !strings.Contains(h, `rel="manifest"`) || !strings.Contains(h, "/manifest.webmanifest") {
+		t.Error("index.html missing web app manifest link")
+	}
+	for _, p := range []string{"media/icon-180.png", "media/icon-192.png", "media/icon-512.png"} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s: %v", p, err)
+		}
 	}
 }
 
