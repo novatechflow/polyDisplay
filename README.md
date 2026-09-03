@@ -8,7 +8,7 @@ assets. A Go process on the host serves the page and talks to Polymarket,
 Binance, and CoinGecko. Browsers only talk to that process.
 
 ```
- ┌────────────┐   http          ┌─────────────────────────────┐   https
+ ┌────────────┐   http        ┌─────────────────────────────┐   https
  │  pad /     │ ────────────► │  polydisplayd (Go)          │ ──► Polymarket
  │  browser   │  /api/state   │   polls + caches            │ ──► Binance
  │            │ ◄──────────── │   serves the page           │ ──► CoinGecko
