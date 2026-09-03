@@ -11,7 +11,8 @@
 //	go run .            # dev
 //	go build -o polydisplayd .   # binary for launchd (see install-macos.sh)
 //
-// Optional: set CG_DEMO_KEY to a free CoinGecko demo key for higher limits.
+// Optional: CG_DEMO_KEY (CoinGecko). Watchlist: POLYDISPLAY_ASSETS in the
+// process env or a .env file in the working directory (see .env.example).
 package main
 
 import (
@@ -46,6 +47,7 @@ type Config struct {
 }
 
 const configPath = "config.json"
+const envPath = ".env"
 
 func defaultConfig() Config {
 	return Config{
@@ -53,31 +55,80 @@ func defaultConfig() Config {
 		CandleDays: 1,
 		Port:       8080,
 		Sort:       "trades",
-		Coins: []Coin{
-			{"BTC", "Bitcoin", "bitcoin", ""},
-			{"ETH", "Ethereum", "ethereum", ""},
-			{"FLR", "Flare", "flare-networks", ""},
-			{"HBAR", "Hedera", "hedera-hashgraph", ""},
-			{"POND", "Marlin", "marlin", ""},
-			{"SOL", "Solana", "solana", ""},
-			{"TRUMP", "Official Trump", "official-trump", ""},
-			{"WIF", "dogwifhat", "dogwifcoin", ""},
-			{"XLM", "Stellar", "stellar", ""},
-			{"XRP", "XRP", "ripple", ""},
-		},
 	}
 }
 
+// KEY=VALUE lines. Existing process env wins. Quotes around values are stripped.
+func loadEnvFile(path string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.Trim(strings.TrimSpace(v), `"'`)
+		if k == "" || os.Getenv(k) != "" {
+			continue
+		}
+		os.Setenv(k, v)
+	}
+}
+
+// POLYDISPLAY_ASSETS=SYM:Name:id,SYM:id,...  Name may contain spaces.
+// Two fields → name defaults to SYM. Fourth field is an optional Binance symbol.
+func parseAssets(s string) []Coin {
+	var out []Coin
+	for _, item := range strings.Split(s, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		p := strings.SplitN(item, ":", 4)
+		var c Coin
+		switch len(p) {
+		case 2:
+			c = Coin{Sym: p[0], Name: p[0], ID: p[1]}
+		case 3:
+			c = Coin{Sym: p[0], Name: p[1], ID: p[2]}
+		case 4:
+			c = Coin{Sym: p[0], Name: p[1], ID: p[2], Bn: p[3]}
+		default:
+			continue
+		}
+		c.Sym = strings.TrimSpace(c.Sym)
+		c.Name = strings.TrimSpace(c.Name)
+		c.ID = strings.TrimSpace(c.ID)
+		c.Bn = strings.TrimSpace(c.Bn)
+		if c.Sym == "" || c.ID == "" {
+			continue
+		}
+		if c.Name == "" {
+			c.Name = c.Sym
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func coinsFromEnv() []Coin {
+	return parseAssets(os.Getenv("POLYDISPLAY_ASSETS"))
+}
+
 func loadConfig() Config {
+	c := defaultConfig()
 	b, err := os.ReadFile(configPath)
 	if err != nil {
-		c := defaultConfig()
 		saveConfig(c)
-		return c
-	}
-	var c Config
-	if json.Unmarshal(b, &c) != nil {
-		return defaultConfig()
+	} else if json.Unmarshal(b, &c) != nil {
+		c = defaultConfig()
 	}
 	if c.Port == 0 {
 		c.Port = 8080
@@ -87,6 +138,9 @@ func loadConfig() Config {
 	}
 	if c.Sort == "" {
 		c.Sort = "trades"
+	}
+	if len(c.Coins) == 0 {
+		c.Coins = coinsFromEnv()
 	}
 	return c
 }
@@ -828,6 +882,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	loadEnvFile(envPath)
 	cfg = loadConfig()
 	log.Printf("polyDisplay: %d assets, wallet %s, port %d", len(cfg.Coins), cfg.Wallet, cfg.Port)
 

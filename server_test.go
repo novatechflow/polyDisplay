@@ -239,6 +239,86 @@ func TestDefaultConfigHasNoWallet(t *testing.T) {
 	}
 }
 
+func TestEnvExampleIsPolymarketCore(t *testing.T) {
+	b, err := os.ReadFile(".env.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "POLYDISPLAY_ASSETS=") {
+			raw = strings.Trim(strings.TrimPrefix(line, "POLYDISPLAY_ASSETS="), `"'`)
+			break
+		}
+	}
+	if raw == "" {
+		t.Fatal(".env.example missing POLYDISPLAY_ASSETS")
+	}
+	got := parseAssets(raw)
+	want := []string{"BTC", "ETH", "SOL", "XRP"}
+	if len(got) != len(want) {
+		t.Fatalf("example assets=%d (%v), want the 4 Polymarket names %v", len(got), got, want)
+	}
+	for i, sym := range want {
+		if got[i].Sym != sym {
+			t.Errorf("example[%d]=%q, want %q", i, got[i].Sym, sym)
+		}
+		if got[i].ID == "" {
+			t.Errorf("example[%d] %s missing coingecko id", i, sym)
+		}
+	}
+}
+
+func TestDefaultConfigHasNoCoins(t *testing.T) {
+	if n := len(defaultConfig().Coins); n != 0 {
+		t.Errorf("default coins=%d, want none (list comes from POLYDISPLAY_ASSETS)", n)
+	}
+}
+
+func TestParseAssets(t *testing.T) {
+	got := parseAssets("BTC:Bitcoin:bitcoin, ETH:ethereum, TRUMP:Official Trump:official-trump, WIF:dogwifhat:dogwifcoin:WIFUSDT, skipme, :noid")
+	want := []Coin{
+		{Sym: "BTC", Name: "Bitcoin", ID: "bitcoin"},
+		{Sym: "ETH", Name: "ETH", ID: "ethereum"},
+		{Sym: "TRUMP", Name: "Official Trump", ID: "official-trump"},
+		{Sym: "WIF", Name: "dogwifhat", ID: "dogwifcoin", Bn: "WIFUSDT"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len=%d, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d]=%+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestCoinsFromEnv(t *testing.T) {
+	t.Setenv("POLYDISPLAY_ASSETS", "SOL:Solana:solana,XRP:XRP:ripple")
+	got := coinsFromEnv()
+	if len(got) != 2 || got[0].Sym != "SOL" || got[1].ID != "ripple" {
+		t.Fatalf("coinsFromEnv=%+v", got)
+	}
+}
+
+func TestLoadEnvFileDoesNotOverride(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/.env"
+	if err := os.WriteFile(path, []byte("POLYDISPLAY_ASSETS=BTC:bitcoin\nCG_DEMO_KEY=fromfile\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CG_DEMO_KEY", "fromproc")
+	t.Setenv("POLYDISPLAY_ASSETS", "")
+	loadEnvFile(path)
+	if os.Getenv("CG_DEMO_KEY") != "fromproc" {
+		t.Errorf("CG_DEMO_KEY=%q, want process env to win", os.Getenv("CG_DEMO_KEY"))
+	}
+	if os.Getenv("POLYDISPLAY_ASSETS") != "BTC:bitcoin" {
+		t.Errorf("POLYDISPLAY_ASSETS=%q, want value from file", os.Getenv("POLYDISPLAY_ASSETS"))
+	}
+}
+
 func TestRefreshFastSkipsPolymarketWithoutWallet(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -290,6 +370,51 @@ func TestLicenseHeaders(t *testing.T) {
 		if !strings.Contains(string(b), notice) {
 			t.Errorf("%s: missing %q", path, notice)
 		}
+	}
+}
+
+func TestInstallScriptSyntax(t *testing.T) {
+	for _, sh := range []string{"install.sh", "install-macos.sh"} {
+		out, err := exec.Command("bash", "-n", sh).CombinedOutput()
+		if err != nil {
+			t.Errorf("%s: bash -n: %v\n%s", sh, err, out)
+		}
+	}
+	b, err := os.ReadFile("install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, want := range []string{
+		"POLYMARKET_WALLET",
+		"darwin) install_macos",
+		"linux) install_linux",
+		"https://go.dev/dl/",
+		".env.example",
+		"POLYDISPLAY_ASSETS",
+		"POLYDISPLAY_EXTRA_ASSETS",
+		"api.coingecko.com/api/v3/search",
+		"api.binance.com/api/v3/ticker/24hr",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("install.sh missing %q", want)
+		}
+	}
+	if strings.Contains(s, "install_windows") {
+		t.Error("install.sh should not install a Windows service")
+	}
+}
+
+func TestLiveConfigIsGitignored(t *testing.T) {
+	out, err := exec.Command("git", "check-ignore", "-v", "config.json").Output()
+	if err != nil {
+		t.Fatalf("config.json must be gitignored: %v", err)
+	}
+	if !strings.Contains(string(out), "config.json") {
+		t.Errorf("check-ignore: %s", out)
+	}
+	if _, err := exec.Command("git", "ls-files", "--error-unmatch", "config.json").Output(); err == nil {
+		t.Error("config.json is tracked; it must not be")
 	}
 }
 

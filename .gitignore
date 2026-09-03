@@ -3,7 +3,12 @@
 # built binary
 /polydisplayd
 /polydisplay
+/polydisplayd.exe
+# toolchain dropped by install.sh when Go is missing
+/.go/
 # runtime logs
 *.log
-# runtime state: written by the server, recreated from defaultConfig() if absent
+# live kiosk state — never commit (wallet, local watchlist)
 /config.json
+# local env (copy from .env.example); POLYDISPLAY_ASSETS lives here
+/.env

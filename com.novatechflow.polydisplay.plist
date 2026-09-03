@@ -5,7 +5,7 @@
   SPDX-License-Identifier: PolyForm-Shield-1.0.0
 
   Template LaunchAgent for the polyDisplay server.
-  Do not use directly - run ./install-macos.sh, which fills in __BIN__/__DIR__
+  Do not use directly - run ./install.sh, which fills in __BIN__/__DIR__
   with real paths and installs this to ~/Library/LaunchAgents/.
 -->
 <plist version="1.0">
