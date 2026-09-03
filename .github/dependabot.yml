@@ -1,0 +1,12 @@
+# Copyright 2026ff novatechflow (Alexander Alten)
+# SPDX-License-Identifier: PolyForm-Shield-1.0.0
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
