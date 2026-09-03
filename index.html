@@ -53,8 +53,6 @@
 
   .coin{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin:8px 4px;}
   .coin.active{box-shadow:inset 3px 0 0 var(--accent);}
-  .coin .traded{font-size:10px;font-weight:700;color:var(--accent);margin-left:8px;
-    text-transform:uppercase;letter-spacing:.5px;vertical-align:middle;}
   .coin .top{display:flex;align-items:baseline;justify-content:space-between;}
   .coin .sym{font-size:18px;font-weight:700;}
   .coin .name{font-size:12px;color:var(--muted);margin-left:8px;}
@@ -424,9 +422,8 @@ function render(s){
   for(var k=0;k<coins.length;k++){
     var c=coins[k];
     var tag=c.source?('<span class="srctag">'+(c.source==="binance"?"Binance":"CoinGecko")+'</span>'):"";
-    var traded=c.active?'<span class="traded">&bull; trading</span>':"";
     cl+='<div class="coin'+(c.active?' active':'')+'"><div class="top">'+
-      '<div><span class="sym">'+esc(c.sym)+'</span>'+traded+'<span class="name">'+esc(c.name)+'</span></div>'+
+      '<div><span class="sym">'+esc(c.sym)+'</span><span class="name">'+esc(c.name)+'</span></div>'+
       '<div><span class="val">'+fmtUsd(c.price)+'</span>'+
         '<span class="chg '+cls(c.chg24h)+'">'+(c.chg24h!=null?fmtPct(c.chg24h)+" 24h":"")+'</span></div></div>'+
       chartWithAxis(c.candles,320,72,s.candleDays,c.price,c.cand24)+tag+'</div>';
