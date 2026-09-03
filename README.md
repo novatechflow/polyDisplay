@@ -41,11 +41,8 @@ On macOS the agent starts at login. For a box that should come back after
 reboot, turn on automatic login. The installer ad-hoc codesigns the binary and
 adds a firewall exception if the firewall is on.
 
-`install.sh` also writes a random 6-digit `POLYDISPLAY_PIN` (printed at the end,
-always in `.env`) and a `POLYDISPLAY_TOKEN_SECRET`. Open the normal pad URL,
-type the PIN once. The browser keeps a bearer token and refreshes it; `/api/*`
-requires `Authorization: Bearer`. Clearing site data on the pad means typing
-the PIN again. `go run .` without a PIN in `.env` stays open (LAN/dev).
+`install.sh` prints a 6-digit pad PIN and stores it as `POLYDISPLAY_PIN` in
+`.env` (plus `POLYDISPLAY_TOKEN_SECRET`). See Auth below.
 
 Dev without installing a service:
 
@@ -65,16 +62,34 @@ docker run --rm -p 8080:8080 --env-file .env -v "$PWD/config.json:/app/config.js
 ```
 
 `touch config.json` before the first run so Docker mounts a file, not a
-directory.
+directory. `.env.example` has no PIN; without `POLYDISPLAY_PIN` the API is
+open. Copy a PIN and `POLYDISPLAY_TOKEN_SECRET` from a machine that ran
+`install.sh`, or set them yourself, then pass `--env-file .env`.
 
 ## Open it
 
 On the LAN: `http://<host-ip>:8080` (or `POLYDISPLAY_PORT`).
 
 On a public VM, put Caddy in front as an HTTPS reverse proxy to that port
-(`localhost:8080` by default). Keep the PIN in `.env` so `/api/*` is not
-open to the internet. The pad still uses the plain URL; no token in the
-address bar.
+(`localhost:8080` by default). Keep `POLYDISPLAY_PIN` set so `/api/*` is not
+open. The pad still uses the plain URL.
+
+## Auth
+
+When `POLYDISPLAY_PIN` is set (always after `install.sh`):
+
+1. Open the normal pad URL. Type the six-digit PIN once (printed at install;
+   otherwise `POLYDISPLAY_PIN` in `.env`).
+2. The browser stores an access token (15 min) and a refresh token (30 days)
+   in `localStorage` and sends `Authorization: Bearer` on every `/api/*` call.
+3. Access expiry refreshes silently. If both tokens are gone (cleared site
+   data, ⚙ Reload · clear cache), type the PIN again.
+
+Wrong PIN five times locks that client for two minutes. The page, icons, and
+manifest stay public. `config.json`, `.env`, logs, and source are not served.
+
+If `POLYDISPLAY_PIN` is unset (`go run .` with no PIN in `.env`), `/api/*` is
+open. That is for local dev only.
 
 ### Pad home screen
 
@@ -96,8 +111,8 @@ Format `SYM:Name:coingecko-id`. Restart after edits. Extra tokens later: ⚙
 search, or run `./install.sh` again and add them at the prompt.
 
 Port: `POLYDISPLAY_PORT` in `.env`, else `config.json` `port`, else 8080.
-Wallet and candle range: ⚙ or `config.json`. Optional `CG_DEMO_KEY` in `.env`
-for a higher CoinGecko rate limit.
+Wallet and candle range: ⚙ or `config.json`. Pad PIN: `POLYDISPLAY_PIN` in
+`.env`. Optional `CG_DEMO_KEY` in `.env` for a higher CoinGecko rate limit.
 
 If ⚙ has saved a `coins` list into `config.json`, that list wins until you
 delete the `coins` key. `config.json` and `.env` are gitignored.
@@ -110,7 +125,8 @@ Logs: `polydisplay.log` in the working directory. Rolled at local midnight to
 Candles and prices: Binance when a USDT pair exists, otherwise CoinGecko.
 Positions: Polymarket data-api.
 
-`GET /api/state`, `GET|POST /api/config`, `GET /api/search?q=`.
+`GET /api/state`, `GET|POST /api/config`, `GET /api/search?q=` (bearer when
+PIN is set). `POST /api/auth/pin`, `POST /api/auth/refresh`.
 
 Pull down at the top of a column, or ⚙ then Reload, to fetch a fresh page.
 
