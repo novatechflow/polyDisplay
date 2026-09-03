@@ -1,6 +1,6 @@
 # polyDisplay
 
-Copyright 2026ff [novatechflow](https://www.novatechflow.com) (Alexander Alten). PolyForm Shield 1.0.0. See `LICENSE`.
+Copyright 2026ff [novatechflow](https://www.novatechflow.com) (Alexander Alten). See `LICENSE`.
 
 LAN dashboard for Polymarket binary trading. Left column is the live book
 (positions, PnL). Right column is charts for a mix of trading and monitoring
