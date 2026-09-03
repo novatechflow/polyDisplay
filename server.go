@@ -559,23 +559,26 @@ func refreshFast() {
 
 	note := ""
 	positions, activity := lastPositions, lastActivity
-	if c.Wallet != polyWallet { // wallet changed -> refetch now, drop stale data
-		polyWallet, polyNextAt, polyBackoff = c.Wallet, time.Time{}, 0
+	wallet := strings.TrimSpace(c.Wallet)
+	if wallet != polyWallet { // wallet changed -> refetch now, drop stale data
+		polyWallet, polyNextAt, polyBackoff = wallet, time.Time{}, 0
 		positions, activity = nil, nil
 	}
 
-	if time.Now().Before(polyNextAt) {
+	if wallet == "" {
+		positions, activity = nil, nil
+	} else if time.Now().Before(polyNextAt) {
 		if polyBackoff > 0 { // rate limited: say so rather than silently showing stale data
 			note = polyBackoffNote()
 		}
 	} else {
-		p, err := fetchPositions(c.Wallet)
+		p, err := fetchPositions(wallet)
 		he, isHTTP := err.(*httpError)
 		switch {
 		case err == nil:
 			positions, polyBackoff = p, 0
 			polyNextAt = time.Now().Add(polyInterval)
-			if a, aerr := fetchActivity(c.Wallet); aerr == nil {
+			if a, aerr := fetchActivity(wallet); aerr == nil {
 				activity = a
 			}
 		case isHTTP && he.Status == 429:
@@ -632,7 +635,7 @@ func refreshFast() {
 	}
 	state = State{
 		Updated:    time.Now().Unix(),
-		Wallet:     c.Wallet,
+		Wallet:     wallet,
 		CandleDays: c.CandleDays,
 		Positions:  positions,
 		Coins:      coinStates,
@@ -755,7 +758,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		mu.Lock()
 		if nc.Wallet != "" {
-			cfg.Wallet = nc.Wallet
+			cfg.Wallet = strings.TrimSpace(nc.Wallet)
 		}
 		if nc.CandleDays != 0 {
 			cfg.CandleDays = nc.CandleDays

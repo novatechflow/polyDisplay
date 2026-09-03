@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -226,5 +227,58 @@ func TestShortURLDropsWallet(t *testing.T) {
 	in := "https://data-api.polymarket.com/positions?user=0xdeadbeef&limit=100"
 	if got := shortURL(in); got != "data-api.polymarket.com/positions" {
 		t.Errorf("shortURL = %q, want the host+path with no query", got)
+	}
+}
+
+func TestDefaultConfigHasNoWallet(t *testing.T) {
+	if got := defaultConfig().Wallet; got != "" {
+		t.Errorf("default wallet = %q, want empty", got)
+	}
+}
+
+func TestRefreshFastSkipsPolymarketWithoutWallet(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		t.Errorf("unexpected call %s", r.URL.Path)
+	}))
+	defer srv.Close()
+
+	origBase := polyBase
+	polyBase = srv.URL
+	cfg = Config{Wallet: "  ", CandleDays: 1, Sort: "az"}
+	polyNextAt, polyBackoff, polyWallet = time.Time{}, 0, "stale"
+	lastPositions = []Position{{Title: "leftover"}}
+	lastActivity = []Act{{Title: "leftover"}}
+	t.Cleanup(func() {
+		polyBase = origBase
+		cfg, state = Config{}, State{}
+		polyNextAt, polyBackoff, polyWallet = time.Time{}, 0, ""
+		lastPositions, lastActivity = nil, nil
+	})
+
+	refreshFast()
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Errorf("called Polymarket %d times with no wallet, want 0", hits)
+	}
+	if len(state.Positions) != 0 || len(state.Activity) != 0 {
+		t.Errorf("positions=%d activity=%d, want both empty", len(state.Positions), len(state.Activity))
+	}
+	if state.Wallet != "" || state.Note != "" {
+		t.Errorf("wallet=%q note=%q, want both empty", state.Wallet, state.Note)
+	}
+}
+
+func TestIndexExplainsMissingWallet(t *testing.T) {
+	b, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, "No Polymarket wallet") {
+		t.Error("index.html missing the no-wallet empty state")
+	}
+	if !strings.Contains(s, "paste an address") {
+		t.Error("index.html missing how to add a wallet")
 	}
 }

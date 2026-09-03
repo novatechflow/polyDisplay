@@ -79,10 +79,10 @@ column, or open **⚙ → Reload · clear cache**.
 
 ## Configure assets (from the iPad)
 
-Tap the **⚙** in the app: edit the Polymarket wallet, pick the candle range
-(1/7/14/30d), and add/remove tokens via live search. Saving writes
-`config.json` on the server and reloads. (You can also edit `config.json`
-directly and restart the service.)
+A fresh install has no wallet. Tap **⚙**, paste a Polymarket address
+(`0x…`), pick the candle range (1/7/14/30d), and add/remove tokens via live
+search. Saving writes `config.json` on the server and reloads. (You can also
+edit `config.json` directly and restart the service.)
 
 ## Data sources & notes
 

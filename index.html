@@ -397,7 +397,10 @@ function loadState(){
 
 function render(s){
   var rows=s.positions||[], html="";
-  if(!rows.length){ html='<div class="empty">No open positions.</div>'; $("pmSummary").innerHTML="&mdash;"; }
+  if(!(s.wallet||"").trim()){
+    html='<div class="empty">No Polymarket wallet.<br>Tap &#9881;, paste an address (0x&hellip;), then Save.</div>';
+    $("pmSummary").innerHTML="&mdash;";
+  } else if(!rows.length){ html='<div class="empty">No open positions.</div>'; $("pmSummary").innerHTML="&mdash;"; }
   else {
     var totalVal=0,totalPnl=0;
     for(var i=0;i<rows.length;i++){
@@ -414,7 +417,7 @@ function render(s){
     }
     $("pmSummary").innerHTML=fmtUsd(totalVal)+' <span class="'+cls(totalPnl)+'">'+fmtSignedUsd(totalPnl)+'</span>';
   }
-  html += activityHtml(s.activity||[]);
+  if((s.wallet||"").trim()) html += activityHtml(s.activity||[]);
   $("pmList").innerHTML=html;
 
   var coins=s.coins||[], cl="";
