@@ -548,3 +548,76 @@ func TestIndexExplainsMissingWallet(t *testing.T) {
 		t.Error("index.html missing how to add a wallet")
 	}
 }
+
+func hourly(vals ...float64) [][2]float64 {
+	now := float64(time.Now().Unix())
+	out := make([][2]float64, len(vals))
+	for i, v := range vals {
+		out[i] = [2]float64{now - float64(len(vals)-1-i)*3600, v}
+	}
+	return out
+}
+
+func TestPnlDeltaMatchesPolymarketAnchor(t *testing.T) {
+	// polymarket.com's 1D series is 24 hourly points spanning 23h, so the day's
+	// P/L is measured against the point 24 samples back.
+	series := hourly(10, 12, 20, 25)
+	d := pnlDelta(series, 3)
+	if d == nil {
+		t.Fatal("3-sample delta over a 4-point series must resolve")
+	}
+	if *d != 13 { // 25 - 12
+		t.Errorf("3-sample delta = %v, want 13", *d)
+	}
+	if pnlDelta(series, 24) != nil {
+		t.Error("day delta over a 4-point series must be nil, not the all-time change")
+	}
+}
+
+func TestPnlDeltaSpansExactSeries(t *testing.T) {
+	// what the feed returns for 30d: exactly 720 hourly points
+	vals := make([]float64, 720)
+	for i := range vals {
+		vals[i] = float64(i)
+	}
+	d := pnlDelta(hourly(vals...), 720)
+	if d == nil || *d != 719 {
+		t.Errorf("30d delta = %v, want the whole series span (719)", d)
+	}
+}
+
+func TestThinKeepsEnds(t *testing.T) {
+	in := hourly(make([]float64, 500)...)
+	for i := range in {
+		in[i][1] = float64(i)
+	}
+	out := thin(in, 120)
+	if len(out) != 120 {
+		t.Fatalf("thin returned %d points, want 120", len(out))
+	}
+	if out[0] != in[0] || out[len(out)-1] != in[len(in)-1] {
+		t.Error("thin must keep the first and last point")
+	}
+	if got := thin(in[:50], 120); len(got) != 50 {
+		t.Errorf("thin shortened a series below the cap: %d", len(got))
+	}
+}
+
+func TestBuildPnlSumsOpenPositions(t *testing.T) {
+	p := buildPnl(hourly(1, 2, 3), []Position{
+		{CashPnl: -5, CurrentValue: 20},
+		{CashPnl: 2, CurrentValue: 8},
+	})
+	if p == nil {
+		t.Fatal("buildPnl returned nil for a non-empty series")
+	}
+	if p.Total != 3 {
+		t.Errorf("Total = %v, want the last series point (3)", p.Total)
+	}
+	if p.Open != -3 || p.Value != 28 {
+		t.Errorf("Open/Value = %v/%v, want -3/28", p.Open, p.Value)
+	}
+	if buildPnl(nil, nil) != nil {
+		t.Error("buildPnl must return nil without a series")
+	}
+}

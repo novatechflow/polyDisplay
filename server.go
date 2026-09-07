@@ -243,6 +243,19 @@ type Act struct {
 	Outcome string  `json:"outcome"`
 }
 
+// Portfolio P/L. Total/series come from Polymarket's user-pnl feed (realized +
+// unrealized, whole account history); Open/Value are summed from the open
+// positions each cycle so they track the 30s position refresh.
+type PnL struct {
+	Total  float64      `json:"total"` // all-time, realized + unrealized
+	D1     *float64     `json:"d1"`    // the day's P/L, as polymarket.com shows it
+	D7     *float64     `json:"d7"`
+	D30    *float64     `json:"d30"`
+	Open   float64      `json:"open"`  // unrealized P/L of open positions
+	Value  float64      `json:"value"` // current value of open positions
+	Series [][2]float64 `json:"series"`
+}
+
 type State struct {
 	Updated    int64       `json:"updated"`
 	Wallet     string      `json:"wallet"`
@@ -250,6 +263,7 @@ type State struct {
 	Positions  []Position  `json:"positions"`
 	Coins      []CoinState `json:"coins"`
 	Activity   []Act       `json:"activity"`
+	Pnl        *PnL        `json:"pnl,omitempty"`
 	Note       string      `json:"note"`
 }
 
@@ -295,6 +309,21 @@ var (
 	polyWallet    string // wallet the cached positions/activity belong to
 	lastPositions []Position
 	lastActivity  []Act
+)
+
+// The P/L series is a separate host with its own history-sized response, and it
+// only moves as fast as prices do, so it gets a slower cadence of its own.
+var pnlBase = "https://user-pnl-api.polymarket.com"
+
+const (
+	pnlInterval    = 2 * time.Minute
+	pnlRateLimited = 10 * time.Minute
+	pnlSeriesMax   = 120 // points kept for the sparkline
+)
+
+var (
+	pnlNextAt time.Time
+	pnlSeries [][2]float64
 )
 
 // schedule the next data-api call after a rate-limit rejection
@@ -617,6 +646,92 @@ func fetchActivity(wallet string) ([]Act, error) {
 	return out, nil
 }
 
+// Cumulative account P/L, hourly over the last 30 days.
+func fetchPnlSeries(wallet string) ([][2]float64, error) {
+	url := pnlBase + "/user-pnl?user_address=" + wallet + "&interval=1m&fidelity=1h"
+	var raw []struct {
+		T int64   `json:"t"`
+		P float64 `json:"p"`
+	}
+	if err := getJSON(url, &raw, nil); err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("empty")
+	}
+	out := make([][2]float64, 0, len(raw))
+	for _, p := range raw {
+		out = append(out, [2]float64{float64(p.T), p.P})
+	}
+	return out, nil
+}
+
+// Change over a trailing number of hourly samples. Polymarket's own profile
+// anchors this by sample, not by clock: its "1D" series is 24 hourly points
+// spanning 23h, so the day's P/L is the change against the point 24 samples
+// back. Matching that anchor makes the card agree with polymarket.com exactly.
+// nil when the series is too young to cover the window.
+func pnlDelta(series [][2]float64, samples int) *float64 {
+	i := len(series) - samples
+	if len(series) < 2 || samples < 1 || i < 0 {
+		return nil
+	}
+	d := series[len(series)-1][1] - series[i][1]
+	return &d
+}
+
+// Thin to at most max points, always keeping the first and last.
+func thin(series [][2]float64, max int) [][2]float64 {
+	if len(series) <= max || max < 2 {
+		return series
+	}
+	out := make([][2]float64, 0, max)
+	step := float64(len(series)-1) / float64(max-1)
+	for i := 0; i < max-1; i++ {
+		out = append(out, series[int(float64(i)*step)])
+	}
+	return append(out, series[len(series)-1])
+}
+
+func buildPnl(series [][2]float64, positions []Position) *PnL {
+	if len(series) == 0 {
+		return nil
+	}
+	p := &PnL{
+		Total:  series[len(series)-1][1],
+		D1:     pnlDelta(series, 24),
+		D7:     pnlDelta(series, 7*24),
+		D30:    pnlDelta(series, 30*24),
+		Series: thin(series, pnlSeriesMax),
+	}
+	for _, q := range positions {
+		p.Open += q.CashPnl
+		p.Value += q.CurrentValue
+	}
+	return p
+}
+
+// refresh the cached P/L series when it's due; failures keep the last one
+func refreshPnl(wallet string) {
+	if wallet == "" || time.Now().Before(pnlNextAt) {
+		return
+	}
+	s, err := fetchPnlSeries(wallet)
+	if err == nil {
+		pnlSeries = s
+		pnlNextAt = time.Now().Add(pnlInterval)
+		return
+	}
+	wait := pnlInterval
+	if he, ok := err.(*httpError); ok && he.Status == 429 {
+		wait = pnlRateLimited
+		if he.RetryAfter > wait {
+			wait = he.RetryAfter
+		}
+	}
+	pnlNextAt = time.Now().Add(wait)
+}
+
 /* ------------------------- refresh loops ------------------------- */
 
 // fast: positions + live prices (every 20s)
@@ -631,6 +746,7 @@ func refreshFast() {
 	if wallet != polyWallet { // wallet changed -> refetch now, drop stale data
 		polyWallet, polyNextAt, polyBackoff = wallet, time.Time{}, 0
 		positions, activity = nil, nil
+		pnlSeries, pnlNextAt = nil, time.Time{}
 	}
 
 	if wallet == "" {
@@ -658,6 +774,11 @@ func refreshFast() {
 		}
 	}
 	lastPositions, lastActivity = positions, activity
+	if wallet == "" {
+		pnlSeries = nil
+	} else {
+		refreshPnl(wallet)
+	}
 
 	// Binance-only hot path. Tokens with no Binance pair (e.g. FLR) use the
 	// CoinGecko price cached by the slow loop, so CoinGecko is never called at
@@ -708,6 +829,7 @@ func refreshFast() {
 		Positions:  positions,
 		Coins:      coinStates,
 		Activity:   activity,
+		Pnl:        buildPnl(pnlSeries, positions),
 		Note:       note,
 	}
 	mu.Unlock()

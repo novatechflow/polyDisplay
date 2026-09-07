@@ -57,6 +57,17 @@
   .col-head .sub{font-size:15px;font-weight:700;text-align:right;}
   .list{flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:4px 12px 12px;}
 
+  .pnl{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 4px;}
+  .pnl .head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;}
+  .pnl .lab{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;}
+  .pnl .big{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.15;}
+  .pnl .spark{flex:1 1 auto;min-width:0;max-width:55%;}
+  .pnl .cells{display:flex;justify-content:space-between;gap:8px;margin-top:8px;
+    border-top:1px solid var(--line);padding-top:8px;}
+  .pnl .cell{flex:1 1 0;min-width:0;text-align:center;}
+  .pnl .cell .k{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
+  .pnl .cell .v{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;}
+
   .pos{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 4px;}
   .pos .title{font-size:15px;font-weight:600;line-height:1.25;margin-bottom:6px;
     display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
@@ -156,7 +167,7 @@
       <div class="list" id="cxList"><div class="empty">Connecting to server&hellip;</div></div>
     </div>
   </main>
-  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v18 &middot; server</span></footer>
+  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v19 &middot; server</span></footer>
 </div>
 
 <div class="modal" id="modal">
@@ -489,6 +500,38 @@ function pullState(thenPoll){
 }
 function loadState(){ pullState(true); }
 
+/* P/L line over the last 30 days, with the break-even line where it fits */
+function pnlSpark(series,w,h){
+  if(!series||series.length<2) return "";
+  var lo=Infinity,hi=-Infinity,i;
+  for(i=0;i<series.length;i++){ var v=series[i][1]; if(v<lo)lo=v; if(v>hi)hi=v; }
+  var range=(hi-lo)||1, y=function(v){ return h-2-((v-lo)/range)*(h-4); };
+  var pts=[];
+  for(i=0;i<series.length;i++) pts.push((i/(series.length-1)*w).toFixed(1)+","+y(series[i][1]).toFixed(1));
+  var up=series[series.length-1][1]>=series[0][1];
+  var stroke=up?"var(--green)":"var(--red)";
+  var zero=(lo<0&&hi>0)?'<line x1="0" y1="'+y(0).toFixed(1)+'" x2="'+w+'" y2="'+y(0).toFixed(1)+
+    '" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3" opacity=".5"/>':"";
+  return '<svg class="spark" viewBox="0 0 '+w+' '+h+'" height="'+h+'" preserveAspectRatio="none">'+zero+
+    '<polyline fill="none" stroke="'+stroke+'" stroke-width="1.6" stroke-linejoin="round" points="'+pts.join(" ")+'"/></svg>';
+}
+function pnlCell(k,v){
+  var t=(v==null)?'<span class="flat">&mdash;</span>':'<span class="'+cls(v)+'">'+fmtSignedUsd(v)+"</span>";
+  return '<div class="cell"><div class="k">'+k+'</div><div class="v">'+t+"</div></div>";
+}
+function pnlHtml(p){
+  if(!p) return "";
+  var day=(p.d1==null)?"&mdash;":fmtSignedUsd(p.d1);
+  return '<div class="pnl"><div class="head"><div>'+
+      '<div class="lab">P/L today</div>'+
+      '<div class="big '+cls(p.d1)+'">'+day+"</div></div>"+
+      pnlSpark(p.series,180,44)+"</div>"+
+    '<div class="cells">'+pnlCell("7d",p.d7)+pnlCell("30d",p.d30)+pnlCell("All-time",p.total)+
+      pnlCell("Open",p.open)+
+      '<div class="cell"><div class="k">Value</div><div class="v">'+fmtUsd(p.value)+"</div></div>"+
+    "</div></div>";
+}
+
 function render(s){
   var rows=s.positions||[], html="";
   if(!(s.wallet||"").trim()){
@@ -511,7 +554,7 @@ function render(s){
     }
     $("pmSummary").innerHTML=fmtUsd(totalVal)+' <span class="'+cls(totalPnl)+'">'+fmtSignedUsd(totalPnl)+'</span>';
   }
-  if((s.wallet||"").trim()) html += activityHtml(s.activity||[]);
+  if((s.wallet||"").trim()){ html = pnlHtml(s.pnl) + html + activityHtml(s.activity||[]); }
   $("pmList").innerHTML=html;
 
   var coins=s.coins||[], cl="";
