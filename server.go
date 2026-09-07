@@ -243,16 +243,14 @@ type Act struct {
 	Outcome string  `json:"outcome"`
 }
 
-// Portfolio P/L. Total/series come from Polymarket's user-pnl feed (realized +
-// unrealized, whole account history); Open/Value are summed from the open
-// positions each cycle so they track the 30s position refresh.
+// Portfolio P/L over the whole account history (realized + unrealized), from
+// Polymarket's user-pnl feed. The open positions' own value and P/L are summed
+// in the column header, not here.
 type PnL struct {
 	Total  float64      `json:"total"` // all-time, realized + unrealized
 	D1     *float64     `json:"d1"`    // the day's P/L, as polymarket.com shows it
 	D7     *float64     `json:"d7"`
 	D30    *float64     `json:"d30"`
-	Open   float64      `json:"open"`  // unrealized P/L of open positions
-	Value  float64      `json:"value"` // current value of open positions
 	Series [][2]float64 `json:"series"`
 }
 
@@ -693,22 +691,17 @@ func thin(series [][2]float64, max int) [][2]float64 {
 	return append(out, series[len(series)-1])
 }
 
-func buildPnl(series [][2]float64, positions []Position) *PnL {
+func buildPnl(series [][2]float64) *PnL {
 	if len(series) == 0 {
 		return nil
 	}
-	p := &PnL{
+	return &PnL{
 		Total:  series[len(series)-1][1],
 		D1:     pnlDelta(series, 24),
 		D7:     pnlDelta(series, 7*24),
 		D30:    pnlDelta(series, 30*24),
 		Series: thin(series, pnlSeriesMax),
 	}
-	for _, q := range positions {
-		p.Open += q.CashPnl
-		p.Value += q.CurrentValue
-	}
-	return p
 }
 
 // refresh the cached P/L series when it's due; failures keep the last one
@@ -829,7 +822,7 @@ func refreshFast() {
 		Positions:  positions,
 		Coins:      coinStates,
 		Activity:   activity,
-		Pnl:        buildPnl(pnlSeries, positions),
+		Pnl:        buildPnl(pnlSeries),
 		Note:       note,
 	}
 	mu.Unlock()

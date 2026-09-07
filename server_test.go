@@ -603,21 +603,15 @@ func TestThinKeepsEnds(t *testing.T) {
 	}
 }
 
-func TestBuildPnlSumsOpenPositions(t *testing.T) {
-	p := buildPnl(hourly(1, 2, 3), []Position{
-		{CashPnl: -5, CurrentValue: 20},
-		{CashPnl: 2, CurrentValue: 8},
-	})
+func TestBuildPnlUsesSeriesEnd(t *testing.T) {
+	p := buildPnl(hourly(1, 2, 3))
 	if p == nil {
 		t.Fatal("buildPnl returned nil for a non-empty series")
 	}
 	if p.Total != 3 {
 		t.Errorf("Total = %v, want the last series point (3)", p.Total)
 	}
-	if p.Open != -3 || p.Value != 28 {
-		t.Errorf("Open/Value = %v/%v, want -3/28", p.Open, p.Value)
-	}
-	if buildPnl(nil, nil) != nil {
+	if buildPnl(nil) != nil {
 		t.Error("buildPnl must return nil without a series")
 	}
 }

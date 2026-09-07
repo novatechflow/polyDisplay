@@ -167,7 +167,7 @@
       <div class="list" id="cxList"><div class="empty">Connecting to server&hellip;</div></div>
     </div>
   </main>
-  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v19 &middot; server</span></footer>
+  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v20 &middot; server</span></footer>
 </div>
 
 <div class="modal" id="modal">
@@ -527,8 +527,6 @@ function pnlHtml(p){
       '<div class="big '+cls(p.d1)+'">'+day+"</div></div>"+
       pnlSpark(p.series,180,44)+"</div>"+
     '<div class="cells">'+pnlCell("7d",p.d7)+pnlCell("30d",p.d30)+pnlCell("All-time",p.total)+
-      pnlCell("Open",p.open)+
-      '<div class="cell"><div class="k">Value</div><div class="v">'+fmtUsd(p.value)+"</div></div>"+
     "</div></div>";
 }
 
