@@ -7,8 +7,9 @@
 /polydisplayd.exe
 # toolchain dropped by install.sh when Go is missing
 /.go/
-# runtime logs
+# runtime logs, incl. the dated rolls (polydisplay.log.YYYY-MM-DD)
 *.log
+*.log.*
 # live kiosk state (wallet, local watchlist). never commit.
 /config.json
 # local env (copy from .env.example); POLYDISPLAY_ASSETS lives here

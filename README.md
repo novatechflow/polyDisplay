@@ -6,9 +6,11 @@
 
 Copyright 2026ff [novatechflow](https://www.novatechflow.com) (Alexander Alten). See `LICENSE`.
 
-LAN dashboard for Polymarket binary trading. Left column is the live book
-(positions, PnL). Right column is charts for a mix of trading and monitoring
-assets. A Go process on the host serves the page and talks to Polymarket,
+LAN dashboard for Polymarket binary trading. Left column is the live book:
+a P/L card (the day's profit as polymarket.com reports it, over a 30-day
+sparkline, with the 7d, 30d, and all-time figures), then the open positions
+and recent activity. Right column is charts for a mix of trading and
+monitoring assets. A Go process on the host serves the page and talks to Polymarket,
 Binance, and CoinGecko. Browsers only talk to that process.
 
 ```
@@ -127,7 +129,14 @@ Logs: `polydisplay.log` in the working directory. Rolled at local midnight to
 ## Data
 
 Candles and prices: Binance when a USDT pair exists, otherwise CoinGecko.
-Positions: Polymarket data-api.
+Positions and activity: Polymarket data-api, polled every 30s. Account P/L:
+Polymarket user-pnl-api, 720 hourly points over 30 days, polled every 2 min
+and thinned to 120 points for the sparkline.
+
+The P/L windows are anchored by sample, not by clock, which is how
+polymarket.com anchors them: its 1D series is 24 hourly points spanning 23h,
+so the day's figure is the change against the point 24 samples back. A window
+the series is too young to cover shows as `-` rather than the all-time change.
 
 `GET /api/state`, `GET|POST /api/config`, `GET /api/search?q=` (bearer when
 PIN is set). `POST /api/auth/pin`, `POST /api/auth/refresh`.
