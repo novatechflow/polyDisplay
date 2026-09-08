@@ -157,6 +157,44 @@ func TestRefreshFastBacksOffAndKeepsLastPositions(t *testing.T) {
 	}
 }
 
+func TestFetchPositionsFiltersResolvedLosses(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"resolved loss", `[{"size":15,"curPrice":0,"currentValue":0,"percentPnl":-99.9991,"redeemable":true}]`, 0},
+		{"unresolved zero price", `[{"curPrice":0,"redeemable":false}]`, 1},
+		{"winner awaiting redemption", `[{"curPrice":1,"redeemable":true}]`, 1},
+		{"missing resolution flag", `[{"curPrice":0}]`, 1},
+		{"mixed positions", `[{"curPrice":0,"redeemable":true},{"curPrice":0.68,"redeemable":false},{"curPrice":1,"redeemable":true}]`, 2},
+		{"empty portfolio", `[]`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			origBase := polyBase
+			polyBase = srv.URL
+			t.Cleanup(func() { polyBase = origBase })
+			positions, err := fetchPositions("0xtest")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(positions) != tc.want {
+				t.Fatalf("got %d positions, want %d", len(positions), tc.want)
+			}
+			for _, p := range positions {
+				if p.Redeemable && p.CurPrice == 0 {
+					t.Error("resolved loss remains visible")
+				}
+			}
+		})
+	}
+}
+
 func TestFetchPositionsSortsByEndTime(t *testing.T) {
 	// Same calendar day for noon/evening: only gamma's timestamp separates them.
 	poly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
