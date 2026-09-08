@@ -225,6 +225,7 @@ type Position struct {
 	Size         float64 `json:"size"`
 	AvgPrice     float64 `json:"avgPrice"`
 	CurPrice     float64 `json:"curPrice"`
+	Redeemable   bool    `json:"redeemable"`
 	CashPnl      float64 `json:"cashPnl"`
 	PercentPnl   float64 `json:"percentPnl"`
 	CurrentValue float64 `json:"currentValue"`
@@ -553,6 +554,14 @@ func fetchPositions(wallet string) ([]Position, error) {
 		"&sizeThreshold=0.1&limit=100&sortBy=CURRENT&sortDirection=DESC"
 	var out []Position
 	err := getJSON(url, &out, nil)
+	open := out[:0]
+	for _, p := range out {
+		if p.Redeemable && p.CurPrice == 0 {
+			continue
+		}
+		open = append(open, p)
+	}
+	out = open
 	fillEndTimes(out)
 	// Soonest resolution first; undated last. ISO timestamps sort as strings.
 	sort.SliceStable(out, func(i, j int) bool {
