@@ -222,6 +222,7 @@ function p2(x){ return (x<10?"0":"")+x; }
 function fmtUsd(n){ if(n==null||isNaN(n))return "-"; var a=Math.abs(n),dp=a>=1000?0:a>=1?2:a>=0.01?4:6;
   return "$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:dp,maximumFractionDigits:dp}); }
 function fmtSignedUsd(n){ if(n==null||isNaN(n))return "-"; return (n>=0?"+":"-")+fmtUsd(Math.abs(n)); }
+function fmtSignedUsd2(n){ if(n==null||isNaN(n))return "-"; return (n>=0?"+":"-")+"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function fmtPct(n){ if(n==null||isNaN(n))return ""; return (n>=0?"+":"")+Number(n).toFixed(2)+"%"; }
 function cls(n){ return n>0?"up":n<0?"down":"flat"; }
 function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
@@ -521,7 +522,7 @@ function pnlCell(k,v){
 }
 function pnlHtml(p){
   if(!p) return "";
-  var day=(p.d1==null)?"&mdash;":fmtSignedUsd(p.d1);
+  var day=(p.d1==null)?"&mdash;":fmtSignedUsd2(p.d1);
   return '<div class="pnl"><div class="head"><div>'+
       '<div class="lab">P/L today</div>'+
       '<div class="big '+cls(p.d1)+'">'+day+"</div></div>"+
