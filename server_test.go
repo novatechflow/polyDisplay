@@ -587,6 +587,20 @@ func TestIndexExplainsMissingWallet(t *testing.T) {
 	}
 }
 
+func TestPnlTodayUsesTwoDecimals(t *testing.T) {
+	b, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, `minimumFractionDigits:2,maximumFractionDigits:2`) {
+		t.Error("index.html missing fixed two-decimal currency formatter")
+	}
+	if !strings.Contains(s, `var day=(p.d1==null)?"&mdash;":fmtSignedUsd2(p.d1)`) {
+		t.Error("P/L today must use the fixed two-decimal formatter")
+	}
+}
+
 func hourly(vals ...float64) [][2]float64 {
 	now := float64(time.Now().Unix())
 	out := make([][2]float64, len(vals))
