@@ -131,7 +131,8 @@ Logs: `polydisplay.log` in the working directory. Rolled at local midnight to
 Candles and prices: Binance when a USDT pair exists, otherwise CoinGecko.
 Positions and activity: Polymarket data-api, polled every 30s. Account P/L:
 Polymarket user-pnl-api, 720 hourly points over 30 days, polled every 2 min
-and thinned to 120 points for the sparkline.
+and thinned to 120 points for the sparkline. Gamma market metadata supplies
+exact end times and the price to beat for BTC Up/Down positions.
 
 The P/L windows are anchored by sample, not by clock, which is how
 polymarket.com anchors them: its 1D series is 24 hourly points spanning 23h,

@@ -221,6 +221,7 @@ function $(id){ return document.getElementById(id); }
 function p2(x){ return (x<10?"0":"")+x; }
 function fmtUsd(n){ if(n==null||isNaN(n))return "-"; var a=Math.abs(n),dp=a>=1000?0:a>=1?2:a>=0.01?4:6;
   return "$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:dp,maximumFractionDigits:dp}); }
+function fmtUsd2(n){ if(n==null||isNaN(n))return "-"; return "$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function fmtSignedUsd(n){ if(n==null||isNaN(n))return "-"; return (n>=0?"+":"-")+fmtUsd(Math.abs(n)); }
 function fmtSignedUsd2(n){ if(n==null||isNaN(n))return "-"; return (n>=0?"+":"-")+"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function fmtPct(n){ if(n==null||isNaN(n))return ""; return (n>=0?"+":"")+Number(n).toFixed(2)+"%"; }
@@ -542,6 +543,8 @@ function render(s){
     for(var i=0;i<rows.length;i++){
       var p=rows[i]; totalVal+=(+p.currentValue||0); totalPnl+=(+p.cashPnl||0);
       var isYes=(p.outcome||"").toLowerCase()==="yes";
+      var priceToBeat=(p.priceToBeat!=null&&+p.priceToBeat>0)?
+        '<div class="row" style="margin-top:4px"><span class="meta">price to beat</span><span>'+fmtUsd2(+p.priceToBeat)+'</span></div>':"";
       html+='<div class="pos"><div class="title">'+esc(p.title)+'</div>'+
         '<div class="row"><span class="meta">'+
           '<span class="badge '+(isYes?"yes":"no")+'">'+esc(p.outcome)+'</span>'+
@@ -549,6 +552,7 @@ function render(s){
           (p.avgPrice!=null?(+p.avgPrice).toFixed(3):"-")+' &rarr; '+(p.curPrice!=null?(+p.curPrice).toFixed(3):"-")+'</span></span>'+
           '<span class="'+cls(+p.cashPnl)+'">'+fmtSignedUsd(+p.cashPnl)+' <span style="opacity:.75">('+fmtPct(+p.percentPnl)+')</span></span>'+
         '</div>'+
+        priceToBeat+
         '<div class="row" style="margin-top:4px"><span class="meta">value</span><span>'+fmtUsd(+p.currentValue)+'</span></div></div>';
     }
     $("pmSummary").innerHTML=fmtUsd(totalVal)+' <span class="'+cls(totalPnl)+'">'+fmtSignedUsd(totalPnl)+'</span>';

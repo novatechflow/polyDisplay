@@ -220,10 +220,10 @@ func TestFetchPositionsSortsByEndTime(t *testing.T) {
 
 	origPoly, origGamma := polyBase, gammaBase
 	polyBase, gammaBase = poly.URL, gamma.URL
-	endTimes = map[string]string{}
+	marketMetadata = map[string]marketMeta{}
 	t.Cleanup(func() {
 		polyBase, gammaBase = origPoly, origGamma
-		endTimes = map[string]string{}
+		marketMetadata = map[string]marketMeta{}
 	})
 
 	got, err := fetchPositions("0xtest")
@@ -244,6 +244,56 @@ func TestFetchPositionsSortsByEndTime(t *testing.T) {
 	}
 	if gammaCalls != 1 {
 		t.Errorf("gamma calls = %d, want 1", gammaCalls)
+	}
+}
+
+func TestFetchPositionsAddsBTCPriceToBeat(t *testing.T) {
+	poly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"title":"Bitcoin Up or Down - September 12, 8:00AM-12:00PM ET","eventSlug":"btc-updown-4h-1789214400","conditionId":"0xbtc"}]`))
+	}))
+	defer poly.Close()
+
+	var gammaCalls int
+	gamma := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gammaCalls++
+		if gammaCalls == 1 {
+			w.Write([]byte(`[{"conditionId":"0xbtc","endDate":"2026-09-12T16:00:00Z","events":[{"eventMetadata":{}}]}]`))
+			return
+		}
+		w.Write([]byte(`[{"conditionId":"0xbtc","endDate":"2026-09-12T16:00:00Z","events":[{"eventMetadata":{"priceToBeat":77338.86223947103}}]}]`))
+	}))
+	defer gamma.Close()
+
+	origPoly, origGamma := polyBase, gammaBase
+	polyBase, gammaBase = poly.URL, gamma.URL
+	marketMetadata = map[string]marketMeta{}
+	t.Cleanup(func() {
+		polyBase, gammaBase = origPoly, origGamma
+		marketMetadata = map[string]marketMeta{}
+	})
+
+	first, err := fetchPositions("0xtest")
+	if err != nil {
+		t.Fatalf("fetchPositions: %v", err)
+	}
+	if first[0].PriceToBeat != nil {
+		t.Fatalf("price to beat unexpectedly set before Gamma publishes it: %v", *first[0].PriceToBeat)
+	}
+	got, err := fetchPositions("0xtest")
+	if err != nil {
+		t.Fatalf("second fetchPositions: %v", err)
+	}
+	if len(got) != 1 || got[0].PriceToBeat == nil {
+		t.Fatalf("price to beat missing from position: %+v", got)
+	}
+	if want := 77338.86223947103; *got[0].PriceToBeat != want {
+		t.Errorf("price to beat = %v, want %v", *got[0].PriceToBeat, want)
+	}
+	if got[0].EndDate != "2026-09-12T16:00:00Z" {
+		t.Errorf("end date = %q", got[0].EndDate)
+	}
+	if gammaCalls != 2 {
+		t.Errorf("gamma calls = %d, want retry after missing price", gammaCalls)
 	}
 }
 
@@ -598,6 +648,20 @@ func TestPnlTodayUsesTwoDecimals(t *testing.T) {
 	}
 	if !strings.Contains(s, `var day=(p.d1==null)?"&mdash;":fmtSignedUsd2(p.d1)`) {
 		t.Error("P/L today must use the fixed two-decimal formatter")
+	}
+}
+
+func TestIndexShowsPriceToBeatWhenAvailable(t *testing.T) {
+	b, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, `p.priceToBeat!=null&&+p.priceToBeat>0`) {
+		t.Error("price to beat must only render for a positive API value")
+	}
+	if !strings.Contains(s, `price to beat</span><span>'+fmtUsd2(+p.priceToBeat)`) {
+		t.Error("position card missing formatted price to beat")
 	}
 }
 
