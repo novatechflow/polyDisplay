@@ -11,13 +11,14 @@ a P/L card (the day's profit as polymarket.com reports it, over a 30-day
 sparkline, with the 7d, 30d, and all-time figures), then the open positions
 and recent activity. Right column is charts for a mix of trading and
 monitoring assets. A Go process on the host serves the page and talks to Polymarket,
-Binance, and CoinGecko. Browsers only talk to that process.
+Kraken, and Coinbase. CoinGecko is used only for asset search. Browsers only talk
+to that process.
 
 ```
  ┌────────────┐   http        ┌─────────────────────────────┐   https
  │  pad /     │ ────────────► │  polydisplayd (Go)          │ ──► Polymarket
- │  browser   │  /api/state   │   polls + caches            │ ──► Binance
- │            │ ◄──────────── │   serves the page           │ ──► CoinGecko
+ │  browser   │  /api/state   │   polls + caches            │ ──► Kraken
+ │            │ ◄──────────── │   serves the page           │ ──► Coinbase
  └────────────┘               │   /api/config, /api/search  │
                               └─────────────────────────────┘
 ```
@@ -36,8 +37,8 @@ Default listen port is 8080 (`POLYDISPLAY_PORT`). Dark/light follows the device.
 Downloads Go if needed, asks for a Polymarket public address (`0x...`), writes
 `config.json`, builds `polydisplayd`, and installs a login service: LaunchAgent
 on macOS, systemd user unit on Linux. At the prompt you can add extra tickers;
-those are looked up on CoinGecko. Binance is used at runtime when a USDT pair
-exists, otherwise CoinGecko.
+those are looked up on CoinGecko. Kraken supplies runtime prices and candles,
+with Coinbase as the fallback.
 
 ```bash
 POLYMARKET_WALLET=0x... POLYDISPLAY_EXTRA_ASSETS=FLR,HBAR ./install.sh
@@ -118,7 +119,7 @@ search, or run `./install.sh` again and add them at the prompt.
 
 Port: `POLYDISPLAY_PORT` in `.env`, else `config.json` `port`, else 8080.
 Wallet and candle range: ⚙ or `config.json`. Pad PIN: `POLYDISPLAY_PIN` in
-`.env`. Optional `CG_DEMO_KEY` in `.env` for a higher CoinGecko rate limit.
+`.env`. Optional `CG_DEMO_KEY` in `.env` applies only to asset search.
 
 If ⚙ has saved a `coins` list into `config.json`, that list wins until you
 delete the `coins` key. `config.json` and `.env` are gitignored.
@@ -128,7 +129,8 @@ Logs: `polydisplay.log` in the working directory. Rolled at local midnight to
 
 ## Data
 
-Candles and prices: Binance when a USDT pair exists, otherwise CoinGecko.
+Candles and prices: Kraken, with Coinbase fallback. Kraken ticker prices are
+fetched in one request; OHLC requests are paced to its public API guidance.
 Positions and activity: Polymarket data-api, polled every 30s. Account P/L:
 Polymarket user-pnl-api, 720 hourly points over 30 days, polled every 2 min
 and thinned to 120 points for the sparkline. Gamma market metadata supplies

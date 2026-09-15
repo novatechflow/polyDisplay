@@ -39,7 +39,7 @@
   <string>/dev/null</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <!-- optional: paste a free CoinGecko demo key for higher rate limits -->
+    <!-- optional: CoinGecko key used only by asset search -->
     <key>CG_DEMO_KEY</key>
     <string></string>
   </dict>
