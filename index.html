@@ -20,7 +20,7 @@
 
   polyDisplay - LAN web app: Polymarket positions + crypto watchlist.
   The browser talks ONLY to the local Go server (/api/*): it aggregates
-  Polymarket + crypto (Binance-first, CoinGecko fallback) so the display
+  Polymarket + crypto (Kraken-first, Coinbase fallback) so the display
   never hits an external API, rate limit, or geoblock.
 -->
 <style>
@@ -196,7 +196,7 @@
       <button class="btn primary" id="saveBtn">Save &amp; reload</button>
     </div>
     <button class="btn" id="reloadBtn" style="width:100%;margin-top:10px">Reload app &middot; clear cache</button>
-    <div class="muted" style="margin-top:10px">Saved on the server (config.json). Data source: Binance &rarr; CoinGecko fallback.</div>
+    <div class="muted" style="margin-top:10px">Saved on the server (config.json). Data source: Kraken &rarr; Coinbase fallback.</div>
   </div>
 </div>
 
@@ -564,7 +564,7 @@ function render(s){
   if(!coins.length){ cl='<div class="empty">No assets. Tap &#9881; to add.</div>'; }
   for(var k=0;k<coins.length;k++){
     var c=coins[k];
-    var tag=c.source?('<span class="srctag">'+(c.source==="binance"?"Binance":"CoinGecko")+'</span>'):"";
+    var tag=c.source?('<span class="srctag">'+(c.source==="kraken"?"Kraken":"Coinbase")+'</span>'):"";
     cl+='<div class="coin'+(c.active?' active':'')+'"><div class="top">'+
       '<div><span class="sym">'+esc(c.sym)+'</span><span class="name">'+esc(c.name)+'</span></div>'+
       '<div><span class="val">'+fmtUsd(c.price)+'</span>'+

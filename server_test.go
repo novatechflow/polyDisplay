@@ -106,7 +106,7 @@ func TestRefreshFastBacksOffAndKeepsLastPositions(t *testing.T) {
 
 	origBase := polyBase
 	polyBase = srv.URL
-	cfg = Config{Wallet: "0xtest", CandleDays: 1, Sort: "az"} // no coins -> no Binance calls
+	cfg = Config{Wallet: "0xtest", CandleDays: 1, Sort: "az"} // no coins -> no market-data calls
 	polyNextAt, polyBackoff, polyWallet = time.Time{}, 0, ""
 	lastPositions, lastActivity = nil, nil
 	t.Cleanup(func() {
@@ -297,20 +297,144 @@ func TestFetchPositionsAddsBTCPriceToBeat(t *testing.T) {
 	}
 }
 
-func TestBinanceDue(t *testing.T) {
-	bnProbe = map[string]time.Time{}
-	t.Cleanup(func() { bnProbe = map[string]time.Time{} })
+func TestMarketPairsPreserveLegacyOverride(t *testing.T) {
+	if got := krakenPair(Coin{Sym: "BTC"}); got != "XBTUSD" {
+		t.Errorf("kraken BTC pair = %q, want XBTUSD", got)
+	}
+	c := Coin{Sym: "OLD", Bn: "WIFUSDT"}
+	if got := krakenPair(c); got != "WIFUSD" {
+		t.Errorf("legacy Kraken pair = %q, want WIFUSD", got)
+	}
+	if got := coinbaseProduct(c); got != "WIF-USD" {
+		t.Errorf("legacy Coinbase product = %q, want WIF-USD", got)
+	}
+}
 
-	if !binanceDue("never-probed") {
-		t.Error("unknown token: want a probe")
+func TestFetchMarketCandlesFallsBackToCoinbase(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/0/public/OHLC":
+			w.WriteHeader(http.StatusUnavailableForLegalReasons)
+		case r.URL.Path == "/products/BTC-USD/candles":
+			// Coinbase is newest-first: [time, low, high, open, close, volume].
+			w.Write([]byte(`[[200,2,4,3,3.5,10],[100,1,3,2,2.5,8]]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	origKraken, origCoinbase := krakenBase, coinbaseBase
+	krakenBase, coinbaseBase = srv.URL, srv.URL
+	t.Cleanup(func() { krakenBase, coinbaseBase = origKraken, origCoinbase })
+
+	got, source, err := fetchMarketCandles(Coin{Sym: "BTC", ID: "bitcoin"}, 1)
+	if err != nil {
+		t.Fatal(err)
 	}
-	bnProbe["flare-networks"] = time.Now().Add(bnProbeEvery)
-	if binanceDue("flare-networks") {
-		t.Error("recently 400'd: want the probe skipped")
+	if source != "coinbase" {
+		t.Errorf("source = %q, want coinbase", source)
 	}
-	bnProbe["flare-networks"] = time.Now().Add(-time.Minute)
-	if !binanceDue("flare-networks") {
-		t.Error("probe window elapsed: want a re-probe")
+	if len(got) != 2 || got[0] != (Candle{100000, 2, 3, 1, 2.5}) || got[1][0] != 200000 {
+		t.Errorf("normalized Coinbase candles = %#v", got)
+	}
+}
+
+func TestFetchKrakenCandlesNormalizesAndSorts(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"error":[],"result":{"BTC/USD":[[200,"3","4","2","3.5","0",1,1],[100,"2","3","1","2.5","0",1,1]],"last":200}}`))
+	}))
+	defer srv.Close()
+	orig := krakenBase
+	krakenBase = srv.URL
+	t.Cleanup(func() { krakenBase = orig })
+
+	got, err := fetchKrakenCandles(Coin{Sym: "BTC"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != (Candle{100000, 2, 3, 1, 2.5}) || got[1][0] != 200000 {
+		t.Errorf("normalized Kraken candles = %#v", got)
+	}
+}
+
+func TestFetchKrakenPricesBatchesPairs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pairs := r.URL.Query().Get("pair")
+		if !strings.Contains(pairs, "XBTUSD") || !strings.Contains(pairs, "ETHUSD") {
+			t.Errorf("pair query = %q", pairs)
+		}
+		w.Write([]byte(`{"error":[],"result":{"BTC/USD":{"c":["100.5","1"]},"ETH/USD":{"c":["20.25","1"]}}}`))
+	}))
+	defer srv.Close()
+	orig := krakenBase
+	krakenBase = srv.URL
+	t.Cleanup(func() { krakenBase = orig })
+
+	got, err := fetchKrakenPrices([]Coin{{Sym: "BTC", ID: "bitcoin"}, {Sym: "ETH", ID: "ethereum"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["bitcoin"] != 100.5 || got["ethereum"] != 20.25 {
+		t.Errorf("prices = %#v", got)
+	}
+}
+
+func TestRefreshFastUsesCoinbaseAndKeepsLastPrice(t *testing.T) {
+	var krakenOK, coinbaseOK atomic.Bool
+	krakenOK.Store(true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/0/public/Ticker":
+			if !krakenOK.Load() {
+				w.WriteHeader(http.StatusUnavailableForLegalReasons)
+				return
+			}
+			w.Write([]byte(`{"error":[],"result":{"BTC/USD":{"c":["100","1"]}}}`))
+		case "/products/BTC-USD/ticker":
+			if !coinbaseOK.Load() {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.Write([]byte(`{"price":"101"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	origKraken, origCoinbase := krakenBase, coinbaseBase
+	krakenBase, coinbaseBase = srv.URL, srv.URL
+	cfg = Config{CandleDays: 1, Sort: "az", Coins: []Coin{{Sym: "BTC", ID: "bitcoin"}}}
+	marketPrice = map[string]float64{}
+	t.Cleanup(func() {
+		krakenBase, coinbaseBase = origKraken, origCoinbase
+		cfg, state = Config{}, State{}
+		marketPrice = map[string]float64{}
+	})
+
+	refreshFast()
+	if got := state.Coins[0].Price; got != 100 {
+		t.Fatalf("Kraken price = %v, want 100", got)
+	}
+
+	krakenOK.Store(false)
+	coinbaseOK.Store(true)
+	refreshFast()
+	if got := state.Coins[0].Price; got != 101 {
+		t.Fatalf("Coinbase fallback price = %v, want 101", got)
+	}
+
+	coinbaseOK.Store(false)
+	refreshFast()
+	if got := state.Coins[0].Price; got != 101 {
+		t.Fatalf("price after both providers fail = %v, want last good 101", got)
+	}
+}
+
+func TestCandleChange24(t *testing.T) {
+	got := candleChange24(110, []Candle{{0, 100, 0, 0, 0}})
+	if got < 9.999 || got > 10.001 {
+		t.Errorf("change = %v, want 10%%", got)
 	}
 }
 
@@ -520,7 +644,8 @@ func TestInstallScriptSyntax(t *testing.T) {
 		"POLYDISPLAY_TOKEN_SECRET",
 		"POLYDISPLAY_EXTRA_ASSETS",
 		"api.coingecko.com/api/v3/search",
-		"api.binance.com/api/v3/ticker/24hr",
+		"Kraken",
+		"Coinbase",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("install.sh missing %q", want)
@@ -528,6 +653,9 @@ func TestInstallScriptSyntax(t *testing.T) {
 	}
 	if strings.Contains(s, "install_windows") {
 		t.Error("install.sh should not install a Windows service")
+	}
+	if strings.Contains(s, "api.binance.com") {
+		t.Error("install.sh must not probe the geo-blocked Binance API")
 	}
 }
 

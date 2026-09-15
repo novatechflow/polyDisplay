@@ -180,11 +180,11 @@ ensure_auth() {
   echo "Clearing site data on the pad means typing the PIN again."
 }
 
-# CoinGecko search for id+name; Binance ticker tells us if SYM+USDT exists.
-# Prints "SYM:Name:id<TAB>binance|coingecko" or exits non-zero.
+# CoinGecko search supplies a stable id and display name. Runtime market data
+# comes from Kraken with Coinbase fallback.
 resolve_asset() {
   py - "$1" <<'PY'
-import json, sys, urllib.error, urllib.parse, urllib.request
+import json, sys, urllib.parse, urllib.request
 
 q = sys.argv[1].strip()
 if not q:
@@ -217,30 +217,16 @@ name = pick.get("name") or sym
 cid = pick.get("id") or ""
 if not cid:
     sys.exit(4)
-src = "coingecko"
-try:
-    urllib.request.urlopen(
-        urllib.request.Request(
-            "https://api.binance.com/api/v3/ticker/24hr?symbol=" + urllib.parse.quote(sym + "USDT"),
-            headers=ua,
-        ),
-        timeout=10,
-    )
-    src = "binance"
-except urllib.error.HTTPError:
-    pass
-except Exception:
-    pass
-print("%s:%s:%s\t%s" % (sym, name, cid, src))
+print("%s:%s:%s" % (sym, name, cid))
 PY
 }
 
 ask_assets() {
-  local extra raw spec src line
+  local extra raw spec line
   extra="${POLYDISPLAY_EXTRA_ASSETS:-}"
   if [ -z "$extra" ] && [ -t 0 ]; then
     echo "Watchlist starts with BTC, ETH, SOL, XRP (Polymarket)."
-    echo "Extra names are looked up on CoinGecko; Binance is used when a USDT pair exists."
+    echo "Extra names are looked up on CoinGecko; charts use Kraken then Coinbase."
     read -r -p "Additional assets to chart (tickers or names, comma-separated, empty to skip): " extra
   fi
   [ -n "$extra" ] || return 0
@@ -251,9 +237,7 @@ ask_assets() {
     line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     [ -n "$line" ] || continue
     if spec="$(resolve_asset "$line")"; then
-      src="${spec##*$'\t'}"
-      spec="${spec%%$'\t'*}"
-      echo "   $spec  ($src)"
+      echo "   $spec"
       specs+=("$spec")
     else
       echo "   skip $line (not found on CoinGecko)"
