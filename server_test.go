@@ -297,6 +297,104 @@ func TestFetchPositionsAddsBTCPriceToBeat(t *testing.T) {
 	}
 }
 
+func TestFetchPositionsAddsAllUpDownMarketsPriceToBeat(t *testing.T) {
+	poly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[
+			{"title":"Bitcoin Up or Down - September 19, 5AM ET","eventSlug":"bitcoin-up-or-down-september-19-2026-5am-et","conditionId":"0xbtc1h"},
+			{"title":"Ethereum Up or Down - September 19, 5:05AM-5:10AM ET","eventSlug":"eth-updown-5m-1789808700","conditionId":"0xeth5m"},
+			{"title":"Solana Market","slug":"sol-updown-15m-1789807500","conditionId":"0xsol15m"},
+			{"title":"XRP Contract","outcome":"Up","conditionId":"0xXrp"},
+			{"title":"Kraken IPO by June 30, 2026?","eventSlug":"kraken-ipo-by-june-30-2026","outcome":"Yes","conditionId":"0xkraken"}
+		]`))
+	}))
+	defer poly.Close()
+
+	var gammaCalls int
+	gamma := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gammaCalls++
+		if gammaCalls == 1 {
+			// First call: metadata published without priceToBeat yet
+			w.Write([]byte(`[
+				{"conditionId":"0xbtc1h","endDate":"2026-09-19T10:00:00Z","events":[{"eventMetadata":{}}]},
+				{"conditionId":"0xeth5m","endDate":"2026-09-19T09:10:00Z","events":[{"eventMetadata":{}}]},
+				{"conditionId":"0xsol15m","endDate":"2026-09-19T09:15:00Z","events":[{"eventMetadata":{}}]},
+				{"conditionId":"0xxrp","endDate":"2026-09-19T09:10:00Z","events":[{"eventMetadata":{}}]},
+				{"conditionId":"0xkraken","endDate":"2026-06-30T04:00:00Z","events":[{"eventMetadata":{}}]}
+			]`))
+			return
+		}
+		// Second call: only the 4 up/down markets should be queried, NOT kraken-ipo
+		w.Write([]byte(`[
+			{"conditionId":"0xbtc1h","endDate":"2026-09-19T10:00:00Z","events":[{"eventMetadata":{"priceToBeat":81312.01}}]},
+			{"conditionId":"0xeth5m","endDate":"2026-09-19T09:10:00Z","events":[{"eventMetadata":{"priceToBeat":2645.23}}]},
+			{"conditionId":"0xsol15m","endDate":"2026-09-19T09:15:00Z","events":[{"eventMetadata":{"priceToBeat":112.27}}]},
+			{"conditionId":"0xxrp","endDate":"2026-09-19T09:10:00Z","events":[{"eventMetadata":{"priceToBeat":1.415}}]}
+		]`))
+	}))
+	defer gamma.Close()
+
+	origPoly, origGamma := polyBase, gammaBase
+	polyBase, gammaBase = poly.URL, gamma.URL
+	marketMetadata = map[string]marketMeta{}
+	t.Cleanup(func() {
+		polyBase, gammaBase = origPoly, origGamma
+		marketMetadata = map[string]marketMeta{}
+	})
+
+	first, err := fetchPositions("0xtest")
+	if err != nil {
+		t.Fatalf("fetchPositions: %v", err)
+	}
+	if len(first) != 5 {
+		t.Fatalf("first positions count = %d, want 5", len(first))
+	}
+	for i, p := range first {
+		if p.PriceToBeat != nil {
+			t.Fatalf("first[%d] unexpectedly has priceToBeat: %v", i, *p.PriceToBeat)
+		}
+	}
+
+	got, err := fetchPositions("0xtest")
+	if err != nil {
+		t.Fatalf("second fetchPositions: %v", err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("second positions count = %d, want 5", len(got))
+	}
+
+	expected := map[string]float64{
+		"0xbtc1h":  81312.01,
+		"0xeth5m":  2645.23,
+		"0xsol15m": 112.27,
+		"0xXrp":    1.415,
+	}
+	for _, p := range got {
+		if want, ok := expected[p.ConditionID]; ok {
+			if p.PriceToBeat == nil {
+				t.Errorf("%s: price to beat missing", p.ConditionID)
+			} else if *p.PriceToBeat != want {
+				t.Errorf("%s: price to beat = %v, want %v", p.ConditionID, *p.PriceToBeat, want)
+			}
+		} else if p.ConditionID == "0xkraken" {
+			if p.PriceToBeat != nil {
+				t.Errorf("kraken position should not have price to beat: %v", *p.PriceToBeat)
+			}
+		}
+	}
+
+	if gammaCalls != 2 {
+		t.Errorf("gamma calls = %d, want 2 (initial fetch + retry for up/down)", gammaCalls)
+	}
+
+	// Third fetch should not call Gamma again because all up/down prices are resolved
+	if _, err := fetchPositions("0xtest"); err != nil {
+		t.Fatalf("third fetchPositions: %v", err)
+	}
+	if gammaCalls != 2 {
+		t.Errorf("gamma calls after 3rd fetch = %d, want still 2", gammaCalls)
+	}
+}
+
 func TestMarketPairsPreserveLegacyOverride(t *testing.T) {
 	if got := krakenPair(Coin{Sym: "BTC"}); got != "XBTUSD" {
 		t.Errorf("kraken BTC pair = %q, want XBTUSD", got)
@@ -790,6 +888,23 @@ func TestIndexShowsPriceToBeatWhenAvailable(t *testing.T) {
 	}
 	if !strings.Contains(s, `price to beat</span><span>'+fmtUsd2(+p.priceToBeat)`) {
 		t.Error("position card missing formatted price to beat")
+	}
+}
+
+func TestIndexShowsTimeToResolutionWhenAvailable(t *testing.T) {
+	b, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if !strings.Contains(s, `time to resolution</span>`) {
+		t.Error("position card missing time to resolution row")
+	}
+	if !strings.Contains(s, `fmtResolution(p.endDate)`) {
+		t.Error("position card missing fmtResolution call for endDate")
+	}
+	if !strings.Contains(s, `function fmtResolution(endStr)`) {
+		t.Error("index.html missing fmtResolution function")
 	}
 }
 

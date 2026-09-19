@@ -134,7 +134,8 @@ fetched in one request; OHLC requests are paced to its public API guidance.
 Positions and activity: Polymarket data-api, polled every 30s. Account P/L:
 Polymarket user-pnl-api, 720 hourly points over 30 days, polled every 2 min
 and thinned to 120 points for the sparkline. Gamma market metadata supplies
-exact end times and the price to beat for BTC Up/Down positions.
+exact end times, time to resolution in the device's timezone, and the price to beat
+for Up/Down positions.
 
 The P/L windows are anchored by sample, not by clock, which is how
 polymarket.com anchors them: its 1D series is 24 hourly points spanning 23h,

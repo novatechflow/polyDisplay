@@ -232,6 +232,7 @@ type Position struct {
 	CurrentValue float64  `json:"currentValue"`
 	ConditionID  string   `json:"conditionId"`
 	EndDate      string   `json:"endDate"`
+	Slug         string   `json:"slug,omitempty"`
 	EventSlug    string   `json:"eventSlug,omitempty"`
 	PriceToBeat  *float64 `json:"priceToBeat,omitempty"`
 }
@@ -691,21 +692,40 @@ type marketMeta struct {
 	PriceToBeat *float64
 }
 
-// End times never move once a market exists. BTC Up/Down reference prices can
+// End times never move once a market exists. Up/Down reference prices can
 // appear after the market metadata is first published, so retry those until set.
 var marketMetadata = map[string]marketMeta{}
+
+func normID(id string) string {
+	return strings.ToLower(strings.TrimSpace(id))
+}
+
+func isUpDown(p Position) bool {
+	if strings.EqualFold(p.Outcome, "up") || strings.EqualFold(p.Outcome, "down") {
+		return true
+	}
+	s := strings.ToLower(p.EventSlug + " " + p.Slug + " " + p.Title)
+	return strings.Contains(s, "updown") ||
+		strings.Contains(s, "up-down") ||
+		strings.Contains(s, "up/down") ||
+		strings.Contains(s, "up or down") ||
+		strings.Contains(s, "up-or-down")
+}
 
 // /positions only carries a date ("2026-08-12"), which can't separate a market
 // closing at noon from one closing at 18:00. gamma has the full timestamp.
 func fillMarketMetadata(pos []Position) {
 	var missing []string
+	seen := map[string]bool{}
 	for _, p := range pos {
-		if p.ConditionID == "" {
+		cid := normID(p.ConditionID)
+		if cid == "" {
 			continue
 		}
-		meta, ok := marketMetadata[p.ConditionID]
-		needsPrice := strings.HasPrefix(p.EventSlug, "btc-updown-") && meta.PriceToBeat == nil
-		if !ok || needsPrice {
+		meta, ok := marketMetadata[cid]
+		needsPrice := isUpDown(p) && meta.PriceToBeat == nil
+		if (!ok || needsPrice) && !seen[cid] {
+			seen[cid] = true
 			missing = append(missing, p.ConditionID)
 		}
 	}
@@ -718,7 +738,7 @@ func fillMarketMetadata(pos []Position) {
 		missing = missing[n:]
 	}
 	for i, p := range pos {
-		if meta, ok := marketMetadata[p.ConditionID]; ok {
+		if meta, ok := marketMetadata[normID(p.ConditionID)]; ok {
 			if meta.EndDate != "" {
 				pos[i].EndDate = meta.EndDate
 			}
@@ -733,9 +753,13 @@ func loadMarketMetadata(ids []string) error {
 		url += "&condition_ids=" + id
 	}
 	var raw []struct {
-		ConditionID string `json:"conditionId"`
-		EndDate     string `json:"endDate"`
-		Events      []struct {
+		ConditionID   string   `json:"conditionId"`
+		EndDate       string   `json:"endDate"`
+		PriceToBeat   *float64 `json:"priceToBeat"`
+		EventMetadata struct {
+			PriceToBeat *float64 `json:"priceToBeat"`
+		} `json:"eventMetadata"`
+		Events []struct {
 			EventMetadata struct {
 				PriceToBeat *float64 `json:"priceToBeat"`
 			} `json:"eventMetadata"`
@@ -745,19 +769,29 @@ func loadMarketMetadata(ids []string) error {
 		return err
 	}
 	for _, m := range raw {
+		cid := normID(m.ConditionID)
 		meta := marketMeta{EndDate: m.EndDate}
+		if prev, ok := marketMetadata[cid]; ok && prev.PriceToBeat != nil {
+			meta.PriceToBeat = prev.PriceToBeat
+		}
+		if m.PriceToBeat != nil && *m.PriceToBeat > 0 {
+			meta.PriceToBeat = m.PriceToBeat
+		} else if m.EventMetadata.PriceToBeat != nil && *m.EventMetadata.PriceToBeat > 0 {
+			meta.PriceToBeat = m.EventMetadata.PriceToBeat
+		}
 		for _, event := range m.Events {
 			if event.EventMetadata.PriceToBeat != nil && *event.EventMetadata.PriceToBeat > 0 {
 				meta.PriceToBeat = event.EventMetadata.PriceToBeat
 				break
 			}
 		}
-		marketMetadata[m.ConditionID] = meta
+		marketMetadata[cid] = meta
 	}
 	// Cache the misses too, so an unknown market isn't re-queried every cycle.
 	for _, id := range ids {
-		if _, ok := marketMetadata[id]; !ok {
-			marketMetadata[id] = marketMeta{}
+		cid := normID(id)
+		if _, ok := marketMetadata[cid]; !ok {
+			marketMetadata[cid] = marketMeta{}
 		}
 	}
 	return nil

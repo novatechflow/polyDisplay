@@ -230,6 +230,75 @@ function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,
 function setDot(id,ok){ $(id).className="dot "+(ok?"ok":"err"); }
 function showErr(msg){ var b=$("errBanner"); if(msg){ b.textContent=msg; b.className="err-banner show"; } else { b.className="err-banner"; } }
 
+var MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function fmtResolution(endStr){
+  if(!endStr) return "";
+  var hasTime = endStr.indexOf("T") >= 0;
+  var dt;
+  if(hasTime){
+    dt = new Date(endStr);
+  } else {
+    var parts = endStr.split("-");
+    if(parts.length < 3) return "";
+    dt = new Date(+parts[0], +parts[1]-1, +parts[2]);
+  }
+  if(isNaN(dt.getTime())) return "";
+
+  var now = new Date();
+  var diffMs = dt.getTime() - now.getTime();
+
+  var isToday = dt.getFullYear() === now.getFullYear() &&
+                dt.getMonth() === now.getMonth() &&
+                dt.getDate() === now.getDate();
+
+  var tom = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  var isTomorrow = dt.getFullYear() === tom.getFullYear() &&
+                   dt.getMonth() === tom.getMonth() &&
+                   dt.getDate() === tom.getDate();
+
+  var timeStr = "";
+  if(hasTime){
+    var hm = p2(dt.getHours()) + ":" + p2(dt.getMinutes());
+    if(isToday){
+      timeStr = hm;
+    } else if(isTomorrow){
+      timeStr = "Tomorrow " + hm;
+    } else {
+      timeStr = MONTHS[dt.getMonth()] + " " + dt.getDate() +
+        (dt.getFullYear() !== now.getFullYear() ? ", " + dt.getFullYear() : "") + " " + hm;
+    }
+  } else {
+    if(isToday){
+      timeStr = "Today";
+    } else if(isTomorrow){
+      timeStr = "Tomorrow";
+    } else {
+      timeStr = MONTHS[dt.getMonth()] + " " + dt.getDate() +
+        (dt.getFullYear() !== now.getFullYear() ? ", " + dt.getFullYear() : "");
+    }
+  }
+
+  var relStr = "";
+  if(diffMs <= 0){
+    relStr = (!hasTime && isToday) ? "today" : "ended";
+  } else {
+    var totalMin = Math.round(diffMs / 60000);
+    if(diffMs < 45000){
+      relStr = "<1m left";
+    } else if(totalMin < 60){
+      relStr = totalMin + "m left";
+    } else if(totalMin < 1440){
+      var h = Math.floor(totalMin / 60), m = totalMin % 60;
+      relStr = h + "h" + (m > 0 ? " " + m + "m" : "") + " left";
+    } else {
+      var d = Math.floor(totalMin / 1440), remH = Math.floor((totalMin % 1440) / 60);
+      relStr = d + "d" + (remH > 0 ? " " + remH + "h" : "") + " left";
+    }
+  }
+
+  return timeStr + " (" + relStr + ")";
+}
+
 function tick(){ var d=new Date(); $("clock").textContent=p2(d.getHours())+":"+p2(d.getMinutes())+":"+p2(d.getSeconds()); }
 setInterval(tick,1000); tick();
 
@@ -545,6 +614,9 @@ function render(s){
       var isYes=(p.outcome||"").toLowerCase()==="yes";
       var priceToBeat=(p.priceToBeat!=null&&+p.priceToBeat>0)?
         '<div class="row" style="margin-top:4px"><span class="meta">price to beat</span><span>'+fmtUsd2(+p.priceToBeat)+'</span></div>':"";
+      var timeToRes=(p.endDate?fmtResolution(p.endDate):"");
+      var timeToResRow=timeToRes?
+        '<div class="row" style="margin-top:4px"><span class="meta">time to resolution</span><span>'+esc(timeToRes)+'</span></div>':"";
       html+='<div class="pos"><div class="title">'+esc(p.title)+'</div>'+
         '<div class="row"><span class="meta">'+
           '<span class="badge '+(isYes?"yes":"no")+'">'+esc(p.outcome)+'</span>'+
@@ -553,6 +625,7 @@ function render(s){
           '<span class="'+cls(+p.cashPnl)+'">'+fmtSignedUsd(+p.cashPnl)+' <span style="opacity:.75">('+fmtPct(+p.percentPnl)+')</span></span>'+
         '</div>'+
         priceToBeat+
+        timeToResRow+
         '<div class="row" style="margin-top:4px"><span class="meta">value</span><span>'+fmtUsd(+p.currentValue)+'</span></div></div>';
     }
     $("pmSummary").innerHTML=fmtUsd(totalVal)+' <span class="'+cls(totalPnl)+'">'+fmtSignedUsd(totalPnl)+'</span>';
