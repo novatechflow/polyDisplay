@@ -4,6 +4,7 @@ FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY go.mod ./
 COPY *.go ./
+COPY VERSION ./
 RUN CGO_ENABLED=0 go build -o /polydisplayd .
 
 FROM alpine:3.24
