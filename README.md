@@ -131,9 +131,11 @@ Logs: `polydisplay.log` in the working directory. Rolled at local midnight to
 
 Candles and prices: Kraken, with Coinbase fallback. Kraken ticker prices are
 fetched in one request; OHLC requests are paced to its public API guidance.
-Positions and activity: Polymarket data-api, polled every 30s. Account P/L:
-Polymarket user-pnl-api, 720 hourly points over 30 days, polled every 2 min
-and thinned to 120 points for the sparkline. Gamma market metadata supplies
+Positions and activity: Polymarket data-api, independently polled every 30s
+and 1 min without request bursts. Account P/L: Polymarket user-pnl-api, 720
+hourly points over 30 days, polled every 30 min and thinned to 120 points for
+the sparkline. Each endpoint backs off independently on failures and honours
+`Retry-After`. Gamma market metadata supplies
 exact end times, time to resolution in the device's timezone, and the price to beat
 for Up/Down positions.
 
