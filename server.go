@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
@@ -291,23 +292,34 @@ var (
 
 /* --------------------- Polymarket pacing --------------------- */
 //
-// data-api sends `cache-control: max-age=15`, so polling faster than that only
-// ever misses Cloudflare's cache and hits the origin rate limiter. We poll at
-// 30s, and on HTTP 429 back off exponentially (honouring Retry-After) while
-// continuing to serve the last positions we got.
+// The APIs are rate limited per public IP by Cloudflare. Keep each endpoint on
+// its own schedule, space calls to the shared Data API host, and add jitter so
+// multiple clients behind the same egress do not synchronize their requests.
 
 // data-api host; a var so tests can point it at a stub
 var polyBase = "https://data-api.polymarket.com"
 
 const (
-	polyInterval   = 30 * time.Second
-	polyBackoffMin = 60 * time.Second
-	polyBackoffMax = 10 * time.Minute
+	positionsInterval = 30 * time.Second
+	activityInterval  = time.Minute
+	pnlInterval       = 30 * time.Minute
+	dataAPIMinGap     = 5 * time.Second
+	activityStartWait = 10 * time.Second
+	pnlStartWait      = 20 * time.Second
+	polyBackoffMin    = time.Minute
+	polyBackoffMax    = 30 * time.Minute
 )
 
+type pollSchedule struct {
+	nextAt  time.Time
+	backoff time.Duration
+}
+
 var (
-	polyNextAt    time.Time // don't call data-api before this
-	polyBackoff   time.Duration
+	positionsPoll pollSchedule
+	activityPoll  pollSchedule
+	pnlPoll       pollSchedule
+	dataAPILastAt time.Time
 	polyWallet    string // wallet the cached positions/activity belong to
 	lastPositions []Position
 	lastActivity  []Act
@@ -317,39 +329,43 @@ var (
 // only moves as fast as prices do, so it gets a slower cadence of its own.
 var pnlBase = "https://user-pnl-api.polymarket.com"
 
-const (
-	pnlInterval    = 2 * time.Minute
-	pnlRateLimited = 10 * time.Minute
-	pnlSeriesMax   = 120 // points kept for the sparkline
-)
+const pnlSeriesMax = 120 // points kept for the sparkline
 
-var (
-	pnlNextAt time.Time
-	pnlSeries [][2]float64
-)
+var pnlSeries [][2]float64
 
-// schedule the next data-api call after a rate-limit rejection
-func polyRateLimited(retryAfter time.Duration) {
-	if polyBackoff == 0 {
-		polyBackoff = polyBackoffMin
-	} else if polyBackoff < polyBackoffMax {
-		polyBackoff *= 2
+func jitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
 	}
-	if polyBackoff > polyBackoffMax {
-		polyBackoff = polyBackoffMax
+	// Positive-only jitter preserves minimum delays and Retry-After semantics.
+	return d + time.Duration(rand.Int64N(max(1, int64(d/10))))
+}
+
+func (p *pollSchedule) success(now time.Time, interval time.Duration) {
+	p.backoff = 0
+	p.nextAt = now.Add(jitter(interval))
+}
+
+func (p *pollSchedule) failed(now time.Time, retryAfter time.Duration) time.Duration {
+	if p.backoff == 0 {
+		p.backoff = polyBackoffMin
+	} else if p.backoff < polyBackoffMax {
+		p.backoff *= 2
 	}
-	wait := polyBackoff
+	if p.backoff > polyBackoffMax {
+		p.backoff = polyBackoffMax
+	}
+	wait := jitter(p.backoff)
 	if retryAfter > wait {
 		wait = retryAfter
 	}
-	polyNextAt = time.Now().Add(wait)
-	log.Printf("polymarket: rate limited, backing off %s", wait.Round(time.Second))
+	p.nextAt = now.Add(wait)
+	return wait
 }
 
-// banner text while we're sitting out a rate limit
-func polyBackoffNote() string {
+func polyBackoffNote(p pollSchedule) string {
 	return fmt.Sprintf("polymarket: rate limited, retrying in %s",
-		time.Until(polyNextAt).Round(time.Second))
+		time.Until(p.nextAt).Round(time.Second))
 }
 
 /* ------------------------- HTTP helpers ------------------------- */
@@ -880,24 +896,22 @@ func buildPnl(series [][2]float64) *PnL {
 }
 
 // refresh the cached P/L series when it's due; failures keep the last one
-func refreshPnl(wallet string) {
-	if wallet == "" || time.Now().Before(pnlNextAt) {
+func refreshPnl(wallet string, now time.Time) {
+	if wallet == "" || now.Before(pnlPoll.nextAt) {
 		return
 	}
 	s, err := fetchPnlSeries(wallet)
 	if err == nil {
 		pnlSeries = s
-		pnlNextAt = time.Now().Add(pnlInterval)
+		pnlPoll.success(now, pnlInterval)
 		return
 	}
-	wait := pnlInterval
+	var retryAfter time.Duration
 	if he, ok := err.(*httpError); ok && he.Status == 429 {
-		wait = pnlRateLimited
-		if he.RetryAfter > wait {
-			wait = he.RetryAfter
-		}
+		retryAfter = he.RetryAfter
 	}
-	pnlNextAt = time.Now().Add(wait)
+	wait := pnlPoll.failed(now, retryAfter)
+	log.Printf("polymarket pnl: request failed, backing off %s", wait.Round(time.Second))
 }
 
 /* ------------------------- refresh loops ------------------------- */
@@ -907,45 +921,70 @@ func refreshFast() {
 	mu.RLock()
 	c := cfg
 	mu.RUnlock()
+	now := time.Now()
 
 	note := ""
 	positions, activity := lastPositions, lastActivity
 	wallet := strings.TrimSpace(c.Wallet)
 	if wallet != polyWallet { // wallet changed -> refetch now, drop stale data
-		polyWallet, polyNextAt, polyBackoff = wallet, time.Time{}, 0
+		polyWallet = wallet
+		positionsPoll = pollSchedule{}
+		activityPoll = pollSchedule{nextAt: now.Add(activityStartWait)}
+		pnlPoll = pollSchedule{nextAt: now.Add(pnlStartWait)}
+		dataAPILastAt = time.Time{}
 		positions, activity = nil, nil
-		pnlSeries, pnlNextAt = nil, time.Time{}
+		pnlSeries = nil
 	}
 
 	if wallet == "" {
 		positions, activity = nil, nil
-	} else if time.Now().Before(polyNextAt) {
-		if polyBackoff > 0 { // rate limited: say so rather than silently showing stale data
-			note = polyBackoffNote()
+	} else if now.Before(positionsPoll.nextAt) {
+		if positionsPoll.backoff > 0 { // say why positions are stale
+			note = polyBackoffNote(positionsPoll)
 		}
 	} else {
 		p, err := fetchPositions(wallet)
+		finishedAt := time.Now()
+		dataAPILastAt = finishedAt
 		he, isHTTP := err.(*httpError)
 		switch {
 		case err == nil:
-			positions, polyBackoff = p, 0
-			polyNextAt = time.Now().Add(polyInterval)
-			if a, aerr := fetchActivity(wallet); aerr == nil {
-				activity = a
-			}
+			positions = p
+			positionsPoll.success(finishedAt, positionsInterval)
 		case isHTTP && he.Status == 429:
-			polyRateLimited(he.RetryAfter) // keep serving the last positions we got
-			note = polyBackoffNote()
+			wait := positionsPoll.failed(finishedAt, he.RetryAfter)
+			log.Printf("polymarket positions: rate limited, backing off %s", wait.Round(time.Second))
+			note = polyBackoffNote(positionsPoll)
 		default:
 			note = "polymarket: " + err.Error()
-			polyNextAt = time.Now().Add(polyInterval)
+			wait := positionsPoll.failed(finishedAt, 0)
+			log.Printf("polymarket positions: request failed, backing off %s", wait.Round(time.Second))
+		}
+	}
+	// Never burst activity immediately after positions on the shared Data API.
+	if wallet != "" && !now.Before(activityPoll.nextAt) &&
+		(dataAPILastAt.IsZero() || now.Sub(dataAPILastAt) >= dataAPIMinGap) {
+		a, err := fetchActivity(wallet)
+		finishedAt := time.Now()
+		dataAPILastAt = finishedAt
+		he, isHTTP := err.(*httpError)
+		switch {
+		case err == nil:
+			activity = a
+			activityPoll.success(finishedAt, activityInterval)
+		case isHTTP && he.Status == 429:
+			wait := activityPoll.failed(finishedAt, he.RetryAfter)
+			log.Printf("polymarket activity: rate limited, backing off %s", wait.Round(time.Second))
+		default:
+			wait := activityPoll.failed(finishedAt, 0)
+			log.Printf("polymarket activity: request failed, backing off %s", wait.Round(time.Second))
 		}
 	}
 	lastPositions, lastActivity = positions, activity
 	if wallet == "" {
 		pnlSeries = nil
 	} else {
-		refreshPnl(wallet)
+		refreshPnl(wallet, time.Now())
 	}
 
 	// Kraken returns all requested tickers in one call. Only missing pairs fall

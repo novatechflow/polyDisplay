@@ -43,9 +43,9 @@ func TestParseRetryAfter(t *testing.T) {
 	}
 }
 
-func TestPolyRateLimitedBackoff(t *testing.T) {
-	polyNextAt, polyBackoff = time.Time{}, 0
-	t.Cleanup(func() { polyNextAt, polyBackoff = time.Time{}, 0 })
+func TestPollScheduleBackoff(t *testing.T) {
+	var poll pollSchedule
+	now := time.Now()
 
 	// doubles from the floor, then clamps at the ceiling
 	want := []time.Duration{
@@ -53,34 +53,37 @@ func TestPolyRateLimitedBackoff(t *testing.T) {
 		2 * polyBackoffMin,
 		4 * polyBackoffMin,
 		8 * polyBackoffMin,
+		16 * polyBackoffMin,
 		polyBackoffMax,
 		polyBackoffMax,
 	}
 	for i, w := range want {
-		polyRateLimited(0)
-		if polyBackoff != w {
-			t.Fatalf("after %d rate limits: backoff = %v, want %v", i+1, polyBackoff, w)
+		wait := poll.failed(now, 0)
+		if poll.backoff != w {
+			t.Fatalf("after %d failures: backoff = %v, want %v", i+1, poll.backoff, w)
 		}
-		if d := time.Until(polyNextAt); d > w || d < w-time.Second {
-			t.Fatalf("after %d rate limits: next call in %v, want ~%v", i+1, d, w)
+		if wait < w || wait >= w+w/10 {
+			t.Fatalf("after %d failures: wait = %v, want [%v, %v)", i+1, wait, w, w+w/10)
+		}
+		if poll.nextAt != now.Add(wait) {
+			t.Fatalf("after %d failures: nextAt = %v, want %v", i+1, poll.nextAt, now.Add(wait))
 		}
 	}
 }
 
-func TestPolyRateLimitedHonoursRetryAfter(t *testing.T) {
-	polyNextAt, polyBackoff = time.Time{}, 0
-	t.Cleanup(func() { polyNextAt, polyBackoff = time.Time{}, 0 })
+func TestPollScheduleHonoursRetryAfter(t *testing.T) {
+	var poll pollSchedule
+	now := time.Now()
 
 	// Retry-After longer than our own backoff wins...
-	polyRateLimited(polyBackoffMin + time.Minute)
-	if d := time.Until(polyNextAt); d < polyBackoffMin+50*time.Second {
-		t.Errorf("next call in %v, want the longer Retry-After", d)
+	want := polyBackoffMin + time.Minute
+	if wait := poll.failed(now, want); wait != want {
+		t.Errorf("wait = %v, want Retry-After %v", wait, want)
 	}
 	// ...and a shorter one does not shorten the backoff.
-	polyNextAt, polyBackoff = time.Time{}, 0
-	polyRateLimited(time.Second)
-	if d := time.Until(polyNextAt); d < polyBackoffMin-time.Second {
-		t.Errorf("next call in %v, want at least the %v floor", d, polyBackoffMin)
+	poll = pollSchedule{}
+	if wait := poll.failed(now, time.Second); wait < polyBackoffMin {
+		t.Errorf("wait = %v, want at least %v", wait, polyBackoffMin)
 	}
 }
 
@@ -107,12 +110,14 @@ func TestRefreshFastBacksOffAndKeepsLastPositions(t *testing.T) {
 	origBase := polyBase
 	polyBase = srv.URL
 	cfg = Config{Wallet: "0xtest", CandleDays: 1, Sort: "az"} // no coins -> no market-data calls
-	polyNextAt, polyBackoff, polyWallet = time.Time{}, 0, ""
+	positionsPoll, activityPoll, pnlPoll = pollSchedule{}, pollSchedule{}, pollSchedule{}
+	dataAPILastAt, polyWallet = time.Time{}, ""
 	lastPositions, lastActivity = nil, nil
 	t.Cleanup(func() {
 		polyBase = origBase
 		cfg, state = Config{}, State{}
-		polyNextAt, polyBackoff, polyWallet = time.Time{}, 0, ""
+		positionsPoll, activityPoll, pnlPoll = pollSchedule{}, pollSchedule{}, pollSchedule{}
+		dataAPILastAt, polyWallet = time.Time{}, ""
 		lastPositions, lastActivity = nil, nil
 	})
 
@@ -125,7 +130,7 @@ func TestRefreshFastBacksOffAndKeepsLastPositions(t *testing.T) {
 
 	// Now the API starts rate limiting. Force the next call to be due.
 	atomic.StoreInt32(&rateLimited, 1)
-	polyNextAt = time.Time{}
+	positionsPoll.nextAt = time.Time{}
 	refreshFast()
 	if len(state.Positions) != 1 {
 		t.Errorf("after 429: positions=%d, want the last good ones kept", len(state.Positions))
@@ -133,8 +138,8 @@ func TestRefreshFastBacksOffAndKeepsLastPositions(t *testing.T) {
 	if !strings.Contains(state.Note, "rate limited") {
 		t.Errorf("after 429: note=%q, want a rate-limit explanation", state.Note)
 	}
-	if polyBackoff != polyBackoffMin {
-		t.Errorf("after 429: backoff=%v, want %v", polyBackoff, polyBackoffMin)
+	if positionsPoll.backoff != polyBackoffMin {
+		t.Errorf("after 429: backoff=%v, want %v", positionsPoll.backoff, polyBackoffMin)
 	}
 
 	// Subsequent cycles inside the backoff window must not touch the API.
@@ -150,10 +155,114 @@ func TestRefreshFastBacksOffAndKeepsLastPositions(t *testing.T) {
 
 	// Once the window passes and the API recovers, we resume and clear the note.
 	atomic.StoreInt32(&rateLimited, 0)
-	polyNextAt = time.Now().Add(-time.Second)
+	positionsPoll.nextAt = time.Now().Add(-time.Second)
 	refreshFast()
-	if state.Note != "" || polyBackoff != 0 {
-		t.Errorf("after recovery: note=%q backoff=%v, want cleared", state.Note, polyBackoff)
+	if state.Note != "" || positionsPoll.backoff != 0 {
+		t.Errorf("after recovery: note=%q backoff=%v, want cleared", state.Note, positionsPoll.backoff)
+	}
+}
+
+func TestRefreshFastPacesActivityIndependently(t *testing.T) {
+	var positionsHits, activityHits int32
+	activityLimited := atomic.Bool{}
+	activityLimited.Store(true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/positions":
+			atomic.AddInt32(&positionsHits, 1)
+			w.Write([]byte(`[]`))
+		case "/activity":
+			atomic.AddInt32(&activityHits, 1)
+			if activityLimited.Load() {
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			w.Write([]byte(`[{"title":"filled"}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	origBase := polyBase
+	polyBase = srv.URL
+	cfg = Config{Wallet: "0xtest", CandleDays: 1, Sort: "az"}
+	positionsPoll, activityPoll = pollSchedule{}, pollSchedule{}
+	pnlPoll = pollSchedule{nextAt: time.Now().Add(time.Hour)}
+	dataAPILastAt, polyWallet = time.Time{}, "0xtest"
+	lastPositions, lastActivity = nil, []Act{{Title: "cached"}}
+	t.Cleanup(func() {
+		polyBase = origBase
+		cfg, state = Config{}, State{}
+		positionsPoll, activityPoll, pnlPoll = pollSchedule{}, pollSchedule{}, pollSchedule{}
+		dataAPILastAt, polyWallet = time.Time{}, ""
+		lastPositions, lastActivity = nil, nil
+	})
+
+	// When both are due, positions runs first and activity is not burst behind it.
+	refreshFast()
+	if positionsHits != 1 || activityHits != 0 {
+		t.Fatalf("startup hits: positions=%d activity=%d, want 1/0", positionsHits, activityHits)
+	}
+
+	// A rate limit applies only to activity and retains its cached value.
+	positionsPoll.nextAt = time.Now().Add(time.Hour)
+	activityPoll.nextAt = time.Time{}
+	dataAPILastAt = time.Time{}
+	refreshFast()
+	if activityHits != 1 || activityPoll.backoff != polyBackoffMin {
+		t.Fatalf("after activity 429: hits=%d backoff=%v", activityHits, activityPoll.backoff)
+	}
+	if len(state.Activity) != 1 || state.Activity[0].Title != "cached" {
+		t.Fatalf("activity after 429 = %+v, want cached value", state.Activity)
+	}
+	if state.Note != "" {
+		t.Fatalf("activity failure should not mark positions stale: note=%q", state.Note)
+	}
+
+	// It does not retry inside its own backoff, then resets after recovery.
+	refreshFast()
+	if activityHits != 1 {
+		t.Fatalf("activity calls during backoff=%d, want 1 total", activityHits)
+	}
+	activityLimited.Store(false)
+	activityPoll.nextAt = time.Time{}
+	dataAPILastAt = time.Time{}
+	refreshFast()
+	if activityHits != 2 || activityPoll.backoff != 0 {
+		t.Fatalf("after activity recovery: hits=%d backoff=%v", activityHits, activityPoll.backoff)
+	}
+	if len(state.Activity) != 1 || state.Activity[0].Title != "filled" {
+		t.Fatalf("activity after recovery = %+v", state.Activity)
+	}
+}
+
+func TestRefreshPnlUsesThirtyMinuteCadence(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Write([]byte(`[{"t":1,"p":2}]`))
+	}))
+	defer srv.Close()
+
+	origBase := pnlBase
+	pnlBase = srv.URL
+	pnlPoll = pollSchedule{}
+	pnlSeries = nil
+	t.Cleanup(func() {
+		pnlBase = origBase
+		pnlPoll = pollSchedule{}
+		pnlSeries = nil
+	})
+
+	now := time.Now()
+	refreshPnl("0xtest", now)
+	refreshPnl("0xtest", now.Add(time.Minute))
+	if hits != 1 {
+		t.Fatalf("P/L hits=%d, want 1 inside 30-minute cadence", hits)
+	}
+	if wait := pnlPoll.nextAt.Sub(now); wait < pnlInterval || wait >= pnlInterval+pnlInterval/10 {
+		t.Fatalf("next P/L poll in %v, want [%v, %v)", wait, pnlInterval, pnlInterval+pnlInterval/10)
 	}
 }
 
@@ -658,13 +767,15 @@ func TestRefreshFastSkipsPolymarketWithoutWallet(t *testing.T) {
 	origBase := polyBase
 	polyBase = srv.URL
 	cfg = Config{Wallet: "  ", CandleDays: 1, Sort: "az"}
-	polyNextAt, polyBackoff, polyWallet = time.Time{}, 0, "stale"
+	positionsPoll, activityPoll, pnlPoll = pollSchedule{}, pollSchedule{}, pollSchedule{}
+	dataAPILastAt, polyWallet = time.Time{}, "stale"
 	lastPositions = []Position{{Title: "leftover"}}
 	lastActivity = []Act{{Title: "leftover"}}
 	t.Cleanup(func() {
 		polyBase = origBase
 		cfg, state = Config{}, State{}
-		polyNextAt, polyBackoff, polyWallet = time.Time{}, 0, ""
+		positionsPoll, activityPoll, pnlPoll = pollSchedule{}, pollSchedule{}, pollSchedule{}
+		dataAPILastAt, polyWallet = time.Time{}, ""
 		lastPositions, lastActivity = nil, nil
 	})
 
