@@ -167,7 +167,7 @@
       <div class="list" id="cxList"><div class="empty">Connecting to server&hellip;</div></div>
     </div>
   </main>
-  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">v20 &middot; server</span></footer>
+  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">server</span></footer>
 </div>
 
 <div class="modal" id="modal">
@@ -602,6 +602,7 @@ function pnlHtml(p){
 }
 
 function render(s){
+  if(s.version) $("appVer").textContent=s.version+" · server";
   var rows=s.positions||[], html="";
   if(!(s.wallet||"").trim()){
     html='<div class="empty">No Polymarket wallet.<br>Tap &#9881;, paste an address (0x&hellip;), then Save.</div>';

@@ -16,6 +16,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,6 +31,9 @@ import (
 	"sync"
 	"time"
 )
+
+//go:embed VERSION
+var serverVersion string
 
 /* ------------------------- config ------------------------- */
 
@@ -261,6 +265,7 @@ type PnL struct {
 }
 
 type State struct {
+	Version    string      `json:"version"`
 	Updated    int64       `json:"updated"`
 	Wallet     string      `json:"wallet"`
 	CandleDays int         `json:"candleDays"`
@@ -1028,6 +1033,7 @@ func refreshFast() {
 		})
 	}
 	state = State{
+		Version:    strings.TrimSpace(serverVersion),
 		Updated:    time.Now().Unix(),
 		Wallet:     wallet,
 		CandleDays: c.CandleDays,
