@@ -835,6 +835,9 @@ func TestLicenseHeaders(t *testing.T) {
 		if path == "" {
 			continue
 		}
+		if path == "VERSION" { // machine-readable metadata, not source text
+			continue
+		}
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Errorf("%s: %v", path, err)
