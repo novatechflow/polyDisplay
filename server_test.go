@@ -658,6 +658,23 @@ func TestDefaultConfigHasNoWallet(t *testing.T) {
 	}
 }
 
+func TestEmbeddedServerVersion(t *testing.T) {
+	if got := strings.TrimSpace(serverVersion); got != "v21" {
+		t.Fatalf("server version = %q, want v21", got)
+	}
+	b, err := os.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(b)
+	if strings.Contains(html, `id="appVer">v21`) {
+		t.Error("client version is hard-coded instead of coming from server state")
+	}
+	if !strings.Contains(html, `$("appVer").textContent=s.version+" · server"`) {
+		t.Error("client does not render the server-reported version")
+	}
+}
+
 func TestEnvExampleIsPolymarketCore(t *testing.T) {
 	b, err := os.ReadFile(".env.example")
 	if err != nil {
@@ -788,6 +805,9 @@ func TestRefreshFastSkipsPolymarketWithoutWallet(t *testing.T) {
 	}
 	if state.Wallet != "" || state.Note != "" {
 		t.Errorf("wallet=%q note=%q, want both empty", state.Wallet, state.Note)
+	}
+	if state.Version != "v21" {
+		t.Errorf("state version=%q, want v21", state.Version)
 	}
 }
 
