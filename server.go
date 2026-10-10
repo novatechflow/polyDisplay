@@ -38,6 +38,7 @@ var serverVersion string
 /* ------------------------- config ------------------------- */
 
 type Coin struct {
+	Kind string `json:"kind,omitempty"` // empty remains crypto for existing configs
 	Sym  string `json:"sym"`
 	Name string `json:"name"`
 	ID   string `json:"id"`           // CoinGecko id
@@ -218,13 +219,17 @@ func saveConfig(c Config) {
 type Candle [5]float64 // [openTimeMs, open, high, low, close]
 
 type CoinState struct {
+	Kind           string   `json:"kind,omitempty"`
+	Unit           string   `json:"unit,omitempty"`
+	Contract       string   `json:"contract,omitempty"`
+	QuoteTime      int64    `json:"quoteTime,omitempty"`
 	CandlesUpdated int64    `json:"candlesUpdated"`
 	MarketError    string   `json:"marketError,omitempty"`
 	Sym            string   `json:"sym"`
 	Name           string   `json:"name"`
 	ID             string   `json:"id"`
 	Price          float64  `json:"price"`
-	Chg24h         float64  `json:"chg24h"`
+	Chg24h         *float64 `json:"chg24h"`
 	Source         string   `json:"source"` // "kraken" | "coinbase" | "binance" | ""
 	Active         bool     `json:"active"` // referenced by a current Polymarket position
 	Candles        []Candle `json:"candles"`
@@ -272,6 +277,7 @@ type PnL struct {
 }
 
 type State struct {
+	Loading    bool        `json:"loading,omitempty"`
 	Version    string      `json:"version"`
 	Updated    int64       `json:"updated"`
 	Wallet     string      `json:"wallet"`
@@ -1132,7 +1138,7 @@ func refreshFast() {
 	// Explicit selection never silently mixes providers. Auto retains fallback.
 	prices := map[string]float64{}
 	if c.MarketProvider == "" || c.MarketProvider == "auto" || c.MarketProvider == "kraken" {
-		prices, _ = fetchKrakenPrices(c.Coins)
+		prices, _ = fetchKrakenPrices(cryptoCoins(c.Coins))
 	}
 	if prices == nil {
 		prices = map[string]float64{}
@@ -1141,7 +1147,7 @@ func refreshFast() {
 	var priceWG sync.WaitGroup
 	var missing []Coin
 	for _, cn := range c.Coins {
-		if prices[cn.ID] == 0 && c.MarketProvider != "kraken" {
+		if cn.Kind != "commodity" && prices[cn.ID] == 0 && c.MarketProvider != "kraken" {
 			missing = append(missing, cn)
 		}
 	}
@@ -1178,12 +1184,24 @@ func refreshFast() {
 	coinStates := make([]CoinState, 0, len(c.Coins))
 	for _, cn := range sortedCoins(c.Coins, c.Sort, active) {
 		p := marketPrice[cn.ID]
-		coinStates = append(coinStates, CoinState{
+		coinState := CoinState{
 			Sym: cn.Sym, Name: cn.Name, ID: cn.ID,
-			Price: p, Chg24h: candleChange24(p, cand24[cn.ID]),
+			Price: p, Chg24h: cryptoChange(p, cand24[cn.ID]),
 			CandlesUpdated: candleUpdated[cn.ID], MarketError: candleErrors[cn.ID], Source: csource[cn.ID], Active: active[cn.ID], Candles: candles[cn.ID],
 			Cand24: cand24[cn.ID],
-		})
+		}
+		if cn.Kind == "commodity" {
+			asset, _ := findCommodity(cn.ID)
+			quote := commodityQuotes[cn.ID]
+			coinState.Kind = "commodity"
+			coinState.Source = "yahoo"
+			coinState.Unit = asset.Unit
+			coinState.Contract = quote.Contract
+			coinState.QuoteTime = quote.Time
+			coinState.Price = quote.Price
+			coinState.Chg24h = quote.Change
+		}
+		coinStates = append(coinStates, coinState)
 	}
 	state = State{
 		Version:    strings.TrimSpace(serverVersion),
@@ -1210,6 +1228,25 @@ func refreshSlow() {
 	mu.RUnlock()
 
 	for _, cn := range c.Coins {
+		if cn.Kind == "commodity" {
+			cs, quote, err := fetchCommodity(cn, c.CandleDays)
+			mu.Lock()
+			if revision != configRevision {
+				mu.Unlock()
+				return
+			}
+			if err != nil {
+				candleErrors[cn.ID] = err.Error()
+			} else {
+				delete(candleErrors, cn.ID)
+				commodityQuotes[cn.ID] = quote
+				candles[cn.ID] = cs
+				candleUpdated[cn.ID] = time.Now().UnixMilli()
+			}
+			mu.Unlock()
+			time.Sleep(1100 * time.Millisecond)
+			continue
+		}
 		cs, src, err := fetchSelectedCandles(cn, c.CandleDays, c.MarketProvider)
 		if err != nil {
 			log.Printf("market candles %s: %v", cn.Sym, err)
@@ -1279,7 +1316,10 @@ func handleState(w http.ResponseWriter, r *http.Request) {
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "POST" {
-		var nc Config
+		var nc struct {
+			Config
+			Wallet *string `json:"wallet"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&nc); err != nil {
 			http.Error(w, "bad json", 400)
 			return
@@ -1293,13 +1333,40 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unsupported candle period", http.StatusBadRequest)
 			return
 		}
+		seen := map[string]bool{}
+		for i, asset := range nc.Coins {
+			if asset.ID == "" || seen[asset.ID] {
+				http.Error(w, "invalid or duplicate asset", 400)
+				return
+			}
+			seen[asset.ID] = true
+			if asset.Kind == "commodity" {
+				c, ok := findCommodity(asset.ID)
+				if !ok {
+					http.Error(w, "unsupported commodity", 400)
+					return
+				}
+				nc.Coins[i] = c.Coin
+			} else if (asset.Kind != "" && asset.Kind != "crypto") || strings.HasPrefix(asset.ID, "yahoo:") {
+				http.Error(w, "unsupported asset kind", 400)
+				return
+			}
+		}
+		if nc.Wallet != nil {
+			wallet := strings.TrimSpace(*nc.Wallet)
+			if wallet != "" && !validWallet(wallet) {
+				http.Error(w, "invalid wallet address", 400)
+				return
+			}
+		}
+
 		mu.Lock()
 		configRevision++
 		if nc.MarketProvider != "" {
 			cfg.MarketProvider = nc.MarketProvider
 		}
-		if nc.Wallet != "" {
-			cfg.Wallet = strings.TrimSpace(nc.Wallet)
+		if nc.Wallet != nil {
+			cfg.Wallet = strings.TrimSpace(*nc.Wallet)
 		}
 		if nc.CandleDays != 0 {
 			cfg.CandleDays = nc.CandleDays
@@ -1311,7 +1378,12 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 			cfg.Coins = nc.Coins
 		}
 		saved := cfg
+		state.Wallet = cfg.Wallet
+		state.Positions = nil
+		state.Activity = nil
+		state.Pnl = nil
 		state.Coins = nil
+		state.Loading = len(cfg.Coins) > 0
 		state.CandleDays = cfg.CandleDays
 		candles = map[string][]Candle{}
 		cand24 = map[string][]Candle{}
@@ -1319,6 +1391,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		candleErrors = map[string]string{}
 		candleUpdated = map[string]int64{}
 		marketPrice = map[string]float64{}
+		commodityQuotes = map[string]commodityQuote{}
 		mu.Unlock()
 		saveConfig(saved)
 		select {
@@ -1336,6 +1409,11 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 // proxy CoinGecko search so the browser never calls out directly
 func handleSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
+	if r.URL.Query().Get("type") == "commodity" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(searchCommodities(q))
+		return
+	}
 	if q == "" {
 		w.Write([]byte("[]"))
 		return

@@ -109,12 +109,12 @@ ask_wallet() {
       read -r -p "Polymarket public address (0x..., empty to keep): " w
       [ -n "$w" ] || w="$current"
     else
-      read -r -p "Polymarket public address (0x...): " w
+      read -r -p "Polymarket public address (0x..., optional; empty for assets only): " w
     fi
   else
     w="$current"
   fi
-  is_wallet "$w" || die "need a Polymarket public address 0x + 40 hex (or set POLYMARKET_WALLET)"
+  [ -z "$w" ] || is_wallet "$w" || die "invalid Polymarket public address 0x + 40 hex (or set POLYMARKET_WALLET)"
   WALLET="$w"
 }
 

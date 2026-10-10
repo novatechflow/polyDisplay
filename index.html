@@ -18,7 +18,7 @@
   Copyright 2026ff novatechflow (Alexander Alten)
   SPDX-License-Identifier: PolyForm-Shield-1.0.0
 
-  polyDisplay - LAN web app: Polymarket positions + crypto watchlist.
+  polyDisplay - LAN web app: Crypto and commodity watchlist with optional Polymarket.
   The browser talks ONLY to the local Go server (/api/*): it aggregates
   Polymarket + crypto (Kraken-first, Coinbase fallback) so the display
   never hits an external API, rate limit, or geoblock.
@@ -51,6 +51,26 @@
   .gear{font-size:22px;color:var(--muted);background:none;border:none;cursor:pointer;padding:4px 6px;}
   main{display:flex;flex:1 1 auto;min-height:0;}
   .col{flex:1 1 50%;min-width:0;display:flex;flex-direction:column;}
+  main.assets-only .col.left{display:none;}
+  main.assets-only .col.right{flex-basis:100%;}
+  #cxList{display:grid;grid-template-columns:1fr;align-content:start;gap:12px;padding:12px 16px 20px;}
+  #cxList .coin{margin:0;border-radius:16px;padding:16px;overflow:hidden;}
+  #cxList .empty{grid-column:1/-1;}
+  main.assets-only #cxList{grid-template-columns:repeat(auto-fit,minmax(300px,1fr));}
+  .coin .top{flex-wrap:wrap;gap:10px;}
+  .coin .quote{display:flex;align-items:baseline;gap:8px;}
+  .asset-meta{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:12px;font-size:11px;color:var(--muted);}
+  .asset-kind{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--accent);margin-bottom:8px;}
+  @media(min-width:1500px){main.assets-only #cxList{grid-template-columns:repeat(3,minmax(0,1fr));}}
+  @media(max-width:650px){
+    main{display:block;overflow-y:auto;}
+    .col{min-height:240px;}
+    .col.left{border-right:0;border-bottom:1px solid var(--line);max-height:48vh;}
+    .list{overflow-y:visible;flex:none;}
+    .col.left .list{overflow-y:auto;flex:1;}
+    main.assets-only #cxList{grid-template-columns:1fr;}
+    .coin .val{font-size:26px;}
+  }
   .col.left{border-right:1px solid var(--line);}
   .col-head{display:flex;align-items:center;justify-content:space-between;padding:10px 16px 6px;flex:0 0 auto;}
   .col-head h2{margin:0;font-size:15px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:1px;}
@@ -157,7 +177,7 @@
     </div>
   </header>
   <div id="errBanner" class="err-banner"></div>
-  <main>
+  <main id="dashboard" class="assets-only">
     <div class="col left">
       <div class="col-head"><h2>Polymarket</h2><div class="sub" id="pmSummary">&mdash;</div></div>
       <div class="list" id="pmList"><div class="empty">Connecting to server&hellip;</div></div>
@@ -173,14 +193,15 @@
 <div class="modal" id="modal">
   <div class="sheet">
     <h3>Settings</h3>
-    <label>Polymarket wallet</label>
-    <input id="walletInput" type="text" spellcheck="false" autocapitalize="off" placeholder="0x...">
+    <label>Polymarket wallet (optional)</label>
+    <input id="walletInput" type="text" spellcheck="false" autocapitalize="off" placeholder="0x... · leave empty for assets only">
+    <div class="muted" style="margin-top:6px">Add an address to show Polymarket alongside your watchlist.</div>
     <label>Candle range</label>
     <select id="daysSel">
       <option value="1">1 day</option><option value="7">7 days</option>
       <option value="14">14 days</option><option value="30">30 days</option>
     </select>
-    <label>Market data source</label>
+    <label>Crypto data source</label>
     <select id="providerSel">
       <option value="auto">Auto (Kraken → Coinbase)</option>
       <option value="kraken">Kraken (USD)</option>
@@ -195,7 +216,8 @@
     </select>
     <label>Watchlist assets</label>
     <div id="chips"></div>
-    <label>Add asset (search)</label>
+    <label>Add asset</label>
+    <select id="assetType"><option value="crypto">Crypto</option><option value="commodity">Commodities · Yahoo futures</option></select>
     <input id="searchInput" type="text" spellcheck="false" autocapitalize="off" placeholder="e.g. bitcoin, sol, chainlink">
     <div id="results"></div>
     <div class="btnrow">
@@ -203,7 +225,7 @@
       <button class="btn primary" id="saveBtn">Save &amp; reload</button>
     </div>
     <button class="btn" id="reloadBtn" style="width:100%;margin-top:10px">Reload app &middot; clear cache</button>
-    <div class="muted" style="margin-top:10px">Applies to the whole watchlist. Auto uses Kraken with Coinbase fallback. Binance uses USDT pairs; availability depends on your connection and the asset.</div>
+    <div class="muted" style="margin-top:10px">Crypto uses your selected source. Commodities use delayed Yahoo futures quotes in USD. Futures are contract prices; their active contract can change.</div>
   </div>
 </div>
 
@@ -531,6 +553,15 @@ function chartWithAxis(data,w,h,days,spot,updated){
     '</div>';
 }
 
+function commodityChart(data,w,h,days){
+  if(!data||data.length<2) return '<div class="empty">Waiting for commodity history</div>';
+  var m=chartMetrics(data), points=[];
+  for(var i=0;i<data.length;i++) points.push(chartX(m,i,w).toFixed(1)+","+chartY(m,data[i][4],h).toFixed(1));
+  return '<div class="chartwrap"><svg class="chart" viewBox="0 0 '+w+' '+h+'" height="'+h+'" preserveAspectRatio="none">'+
+    '<polyline fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" points="'+points.join(" ")+'"/></svg>'+
+    '<div class="xaxis"><span>'+axisTime(data[0][0],days)+'</span><span>'+axisTime(data[data.length-1][0],days)+'</span></div></div>';
+}
+
 /* ---------- auth: PIN once, then bearer in localStorage ---------- */
 var LS_A="pd_access", LS_R="pd_refresh";
 function getAccess(){ try{ return localStorage.getItem(LS_A)||""; }catch(e){ return ""; } }
@@ -635,6 +666,7 @@ function pnlHtml(p){
 }
 
 function render(s){
+  $("dashboard").className=(s.wallet||"").trim()?"":"assets-only";
   if(s.version) $("appVer").textContent=s.version+" · server";
   var rows=s.positions||[], html="";
   if(!(s.wallet||"").trim()){
@@ -668,17 +700,23 @@ function render(s){
   $("pmList").innerHTML=html;
 
   var coins=s.coins||[], cl="";
-  if(!coins.length){ cl='<div class="empty">No assets. Tap &#9881; to add.</div>'; }
+  if(!coins.length){ cl='<div class="empty">'+(s.loading?"Refreshing watchlist&hellip;":"No assets. Tap &#9881; to add.")+'</div>'; }
   for(var k=0;k<coins.length;k++){
     var c=coins[k];
-    var sourceName={kraken:"Kraken · USD",coinbase:"Coinbase · USD",binance:"Binance · USDT"};
-    var tag=c.source?('<span class="srctag">'+esc(sourceName[c.source]||c.source)+'</span>'):"";
-    cl+='<div class="coin'+(c.active?' active':'')+'"><div class="top">'+
+    var commodity=c.kind==="commodity";
+    var sourceName={kraken:"Kraken · USD",coinbase:"Coinbase · USD",binance:"Binance · USDT",yahoo:"Yahoo · USD"};
+    var quoteTime=c.quoteTime?new Date(c.quoteTime*1000).toLocaleString():"";
+    var freshness=c.marketError?"Unavailable":(!c.quoteTime?"Waiting for quote":(Date.now()/1000-c.quoteTime>1800?"Delayed · last quote":"Delayed quote"));
+    cl+='<div class="coin'+(c.active?' active':'')+'">'+
+      '<div class="asset-kind">'+(commodity?'Commodity · futures':'Crypto')+'</div><div class="top">'+
       '<div><span class="sym">'+esc(c.sym)+'</span><span class="name">'+esc(c.name)+'</span></div>'+
-      '<div><span class="val">'+(c.price>0?fmtUsd(c.price):"&mdash;")+'</span>'+
-        '<span class="chg '+cls(c.chg24h)+'">'+(c.chg24h!=null?fmtPct(c.chg24h)+" 24h":"")+'</span></div></div>'+
-      chartWithAxis(c.candles,320,72,s.candleDays,c.price,c.candlesUpdated)+tag+
-      (c.marketError?'<div class="muted">Market data unavailable: '+esc(c.marketError)+'</div>':"")+'</div>';
+      '<div class="quote"><span class="val">'+(c.price>0?fmtUsd(c.price):"&mdash;")+'</span>'+
+        '<span class="chg '+cls(c.chg24h)+'">'+(c.chg24h!=null?fmtPct(c.chg24h)+(commodity?" session":" 24h"):"")+'</span></div></div>'+
+      (commodity?commodityChart(c.candles,320,96,s.candleDays):chartWithAxis(c.candles,320,96,s.candleDays,c.price,c.candlesUpdated))+
+      '<div class="asset-meta"><span>'+esc(sourceName[c.source]||c.source||"Connecting")+(c.unit?' / '+esc(c.unit):'')+'</span>'+
+      (commodity?'<span>'+esc(freshness)+(quoteTime?' · '+esc(quoteTime):'')+'</span>':'')+'</div>'+
+      (c.contract?'<div class="muted" style="margin-top:6px">'+esc(c.contract)+'</div>':"")+
+      (c.marketError?'<div class="muted" style="margin-top:6px">Market data unavailable: '+esc(c.marketError)+'</div>':"")+'</div>';
   }
   $("cxList").innerHTML=cl;
 
@@ -720,14 +758,17 @@ var searchTimer=null;
 function onSearch(){
   var q=$("searchInput").value.trim();
   if(searchTimer)clearTimeout(searchTimer);
-  if(!q){ $("results").innerHTML=""; return; }
+  $("results").innerHTML="";
+  if(!q && $("assetType").value!=="commodity") return;
   searchTimer=setTimeout(function(){
-    api("/api/search?q="+encodeURIComponent(q), {}, function(res){
+    var searchType=$("assetType").value;
+    api("/api/search?type="+searchType+"&q="+encodeURIComponent(q), {}, function(res){
       if(!res||!res.ok){ $("results").innerHTML='<div class="muted">Search failed.</div>'; return; }
       res.json().then(function(list){
+      if(!draftCoins || searchType!==$("assetType").value || q!==$("searchInput").value.trim()) return;
       list=list||[]; var h="";
       for(var i=0;i<list.length;i++){
-        h+='<div class="result" data-id="'+esc(list[i].ID)+'" data-sym="'+esc((list[i].Sym||"").toUpperCase())+'" data-name="'+esc(list[i].Name)+'">'+
+        h+='<div class="result" data-id="'+esc(list[i].ID)+'" data-sym="'+esc((list[i].Sym||"").toUpperCase())+'" data-name="'+esc(list[i].Name)+'" data-kind="'+esc(list[i].Kind||"crypto")+'">'+
            '<b>'+esc((list[i].Sym||"").toUpperCase())+'</b> &middot; '+esc(list[i].Name)+'</div>';
       }
       $("results").innerHTML=h||'<div class="muted">No matches.</div>';
@@ -735,7 +776,7 @@ function onSearch(){
       for(var k=0;k<rs.length;k++){ rs[k].onclick=function(){
         var id=this.getAttribute("data-id");
         for(var j=0;j<draftCoins.length;j++){ if(draftCoins[j].id===id) return; }
-        draftCoins.push({ sym:this.getAttribute("data-sym"), name:this.getAttribute("data-name"), id:id });
+        draftCoins.push({ sym:this.getAttribute("data-sym"), name:this.getAttribute("data-name"), id:id, kind:this.getAttribute("data-kind") });
         renderChips(); $("searchInput").value=""; $("results").innerHTML="";
       }; }
     }).catch(function(){ $("results").innerHTML='<div class="muted">Search failed.</div>'; });
@@ -772,6 +813,10 @@ $("cancelBtn").onclick=closeSettings;
 $("saveBtn").onclick=saveSettings;
 $("reloadBtn").onclick=purgeAndReload;
 $("searchInput").oninput=onSearch;
+$("assetType").onchange=function(){
+  $("searchInput").placeholder=this.value==="commodity"?"e.g. gold, oil, silver":"e.g. bitcoin, sol, chainlink";
+  onSearch();
+};
 $("modal").onclick=function(e){ if(e.target===this) closeSettings(); };
 
 /* ---------- pull-to-refresh (drag a column down at the top to reload) ---------- */

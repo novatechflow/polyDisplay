@@ -75,3 +75,11 @@ test('candle geometry preserves elapsed time across missing intervals', () => {
   const x0 = ctx.chartX(m, 0, 300), x1 = ctx.chartX(m, 1, 300), x2 = ctx.chartX(m, 2, 300);
   assert.ok(Math.abs((x2 - x1) / (x1 - x0) - 3) < 1e-10);
 });
+test('commodity chart preserves session gaps without crypto trend signals', () => {
+  const data = [[1000,10,12,9,11],[2000,11,13,10,12],[10000,12,14,11,13]];
+  const chart = ctx.commodityChart(data,320,96,1);
+  assert.match(chart,/polyline/);
+  assert.doesNotMatch(chart,/trend|Unavailable|stroke-dasharray/);
+  const points = chart.match(/points="([^"]+)"/)[1].split(' ').map(p => p.split(',').map(Number));
+  assert.ok(points[2][0]-points[1][0] > 7*(points[1][0]-points[0][0]), 'session gap must occupy elapsed time');
+});

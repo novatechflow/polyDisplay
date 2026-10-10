@@ -6,19 +6,34 @@
 
 Copyright 2026ff [novatechflow](https://www.novatechflow.com) (Alexander Alten). See `LICENSE`.
 
-LAN dashboard for Polymarket binary trading. Left column is the live book:
-a P/L card (the day's profit as polymarket.com reports it, over a 30-day
-sparkline, with the 7d, 30d, and all-time figures), then the open positions
-and recent activity. Right column is charts for a mix of trading and
-monitoring assets. A Go process on the host serves the page and talks to Polymarket,
-Kraken, and Coinbase. CoinGecko is used only for asset search. Browsers only talk
-to that process.
+LAN dashboard for crypto and commodities, with optional Polymarket positions.
+Without a wallet, the watchlist fills the display with responsive asset tiles.
+Add a Polymarket public address in Settings to show positions, P/L and activity
+on the left and your watchlist on the right. On phones the panels stack.
+Clear the address to return to the full-width watchlist.
+
+Crypto prices and candles use Kraken, Coinbase or Binance. CoinGecko supplies
+crypto search. In Settings, choose **Commodities** under Add asset to search
+Gold, Silver, Copper, WTI, Brent and Natural Gas futures. Yahoo supplies these
+quotes and chart history without an API key. Tiles identify the contract,
+USD unit, delayed status and last quote time. Commodity changes use Yahoo's
+previous-session close when available; crypto changes use the last 24 hours.
+Commodity charts preserve session gaps and do not apply the continuous-crypto
+trend analysis. Quotes and history refresh every five minutes; old quotes remain
+labelled with their original timestamp when a market is idle or a fetch fails.
+
+Yahoo futures quotes are delayed, and the active contract can roll. They are
+not spot commodity prices. This optional integration uses Yahoo's unofficial
+chart endpoint for personal dashboards; availability can change. For shared
+or commercial deployments, use a provider with appropriate data rights.
+
+The Go server polls and caches all data; browsers only contact the local server.
 
 ```
  ┌────────────┐   http        ┌─────────────────────────────┐   https
  │  pad /     │ ────────────► │  polydisplayd (Go)          │ ──► Polymarket
  │  browser   │  /api/state   │   polls + caches            │ ──► Kraken
- │            │ ◄──────────── │   serves the page           │ ──► Coinbase
+ │            │ ◄──────────── │   serves the page           │ ──► Coinbase / Yahoo
  └────────────┘               │   /api/config, /api/search  │
                               └─────────────────────────────┘
 ```
@@ -34,7 +49,7 @@ Default listen port is 8080 (`POLYDISPLAY_PORT`). Dark/light follows the device.
 ./install.sh
 ```
 
-Downloads Go if needed, asks for a Polymarket public address (`0x...`), writes
+Downloads Go if needed, asks for an optional Polymarket public address (`0x...`; leave empty for assets only), writes
 `config.json`, builds `polydisplayd`, and installs a login service: LaunchAgent
 on macOS, systemd user unit on Linux. At the prompt you can add extra tickers;
 those are looked up on CoinGecko. Kraken supplies runtime prices and candles,
