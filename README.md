@@ -12,6 +12,13 @@ Add a Polymarket public address in Settings to show positions, P/L and activity
 on the left and your watchlist on the right. On phones the panels stack.
 Clear the address to return to the full-width watchlist.
 
+Tiles use compact spacing on tablets, with two columns in portrait mode. Drag a tile by its grip in the upper-right
+corner to move it; the new custom order saves automatically on the server and
+survives reloads. Scrolling elsewhere on a tile works normally. You can also
+focus the grip and use arrow keys. Older iPads running iOS 10 use legacy grid
+spacing and Touch Events for dragging. Settings can restore alphabetical or
+traded-assets-first sorting.
+
 Crypto prices and candles use Kraken, Coinbase or Binance. CoinGecko supplies
 crypto search. In Settings, choose **Commodities** under Add asset to search
 Gold, Silver, Copper, WTI, Brent and Natural Gas futures. Yahoo supplies these

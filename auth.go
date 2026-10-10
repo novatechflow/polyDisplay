@@ -241,7 +241,7 @@ func cors(w http.ResponseWriter) {
 func blockedStatic(p string) bool {
 	p = strings.TrimPrefix(p, "/")
 	switch {
-	case p == "config.json", p == ".env", p == "go.mod":
+	case p == "config.json", p == "config.json.tmp", p == ".env", p == "go.mod":
 		return true
 	case strings.HasPrefix(p, "polydisplay.log"), strings.HasPrefix(p, ".git"), strings.HasSuffix(p, ".go"), strings.HasSuffix(p, ".sh"):
 		return true

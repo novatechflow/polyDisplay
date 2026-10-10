@@ -53,15 +53,31 @@
   .col{flex:1 1 50%;min-width:0;display:flex;flex-direction:column;}
   main.assets-only .col.left{display:none;}
   main.assets-only .col.right{flex-basis:100%;}
-  #cxList{display:grid;grid-template-columns:1fr;align-content:start;gap:12px;padding:12px 16px 20px;}
-  #cxList .coin{margin:0;border-radius:16px;padding:16px;overflow:hidden;}
+  #cxList{display:grid;grid-template-columns:1fr;align-content:start;grid-gap:8px;gap:8px;padding:8px 12px 16px;}
+  #cxList .coin{margin:0;border-radius:12px;padding:12px;overflow:hidden;}
   #cxList .empty{grid-column:1/-1;}
-  main.assets-only #cxList{grid-template-columns:repeat(auto-fit,minmax(300px,1fr));}
+  main.assets-only #cxList{grid-template-columns:repeat(auto-fit,minmax(280px,1fr));}
   .coin .top{flex-wrap:wrap;gap:10px;}
   .coin .quote{display:flex;align-items:baseline;gap:8px;}
-  .asset-meta{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:12px;font-size:11px;color:var(--muted);}
-  .asset-kind{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--accent);margin-bottom:8px;}
+  .asset-meta{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted);}
+  .asset-kind{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--accent);margin-bottom:6px;}
+  .tile-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;}
+  .tile-head .asset-kind{margin:0;}
+  .tile-handle{touch-action:none;cursor:grab;border:0;background:none;color:var(--muted);font-size:20px;
+    padding:0 4px;min-width:32px;min-height:28px;line-height:1;border-radius:5px;}
+  .tile-handle:focus-visible{outline:2px solid var(--accent);}
+  .coin.dragging{opacity:.5;outline:2px solid var(--accent);pointer-events:none;}
+  #cxList.reordering .tile-handle{cursor:grabbing;}
+  @media(min-width:651px) and (max-width:1200px){
+    #cxList{grid-gap:8px;gap:8px;padding:8px 10px 14px;}
+    #cxList .coin{padding:10px;}
+    #cxList .coin .sym{font-size:16px;}
+    #cxList .coin .val{font-size:19px;}
+  }
   @media(min-width:1500px){main.assets-only #cxList{grid-template-columns:repeat(3,minmax(0,1fr));}}
+  @media(min-width:651px) and (orientation:portrait){
+    main.assets-only #cxList{grid-template-columns:repeat(2,minmax(0,1fr));}
+  }
   @media(max-width:650px){
     main{display:block;overflow-y:auto;}
     .col{min-height:240px;}
@@ -69,7 +85,7 @@
     .list{overflow-y:visible;flex:none;}
     .col.left .list{overflow-y:auto;flex:1;}
     main.assets-only #cxList{grid-template-columns:1fr;}
-    .coin .val{font-size:26px;}
+    #cxList .coin .val{font-size:26px;}
   }
   .col.left{border-right:1px solid var(--line);}
   .col-head{display:flex;align-items:center;justify-content:space-between;padding:10px 16px 6px;flex:0 0 auto;}
@@ -187,7 +203,7 @@
       <div class="list" id="cxList"><div class="empty">Connecting to server&hellip;</div></div>
     </div>
   </main>
-  <footer><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">server</span></footer>
+  <footer><span id="orderStatus" role="status" aria-live="polite"></span><span id="footL">polyDisplay &middot; pull down to reload</span><span id="appVer">server</span></footer>
 </div>
 
 <div class="modal" id="modal">
@@ -212,7 +228,7 @@
     <select id="sortSel">
       <option value="trades">Traded assets first</option>
       <option value="az">Symbol A&ndash;Z</option>
-      <option value="config">As added (custom order)</option>
+      <option value="config">Custom order (drag tiles)</option>
     </select>
     <label>Watchlist assets</label>
     <div id="chips"></div>
@@ -665,7 +681,9 @@ function pnlHtml(p){
     "</div></div>";
 }
 
+var tileDrag=null, orderSaving=false;
 function render(s){
+  if(tileDrag || orderSaving) return;
   $("dashboard").className=(s.wallet||"").trim()?"":"assets-only";
   if(s.version) $("appVer").textContent=s.version+" · server";
   var rows=s.positions||[], html="";
@@ -699,7 +717,7 @@ function render(s){
   if((s.wallet||"").trim()){ html = pnlHtml(s.pnl) + html + activityHtml(s.activity||[]); }
   $("pmList").innerHTML=html;
 
-  var coins=s.coins||[], cl="";
+  var coins=s.coins||[], cl="", chartHeight=window.matchMedia("(min-width:651px) and (max-width:1200px)").matches?76:84;
   if(!coins.length){ cl='<div class="empty">'+(s.loading?"Refreshing watchlist&hellip;":"No assets. Tap &#9881; to add.")+'</div>'; }
   for(var k=0;k<coins.length;k++){
     var c=coins[k];
@@ -707,18 +725,24 @@ function render(s){
     var sourceName={kraken:"Kraken · USD",coinbase:"Coinbase · USD",binance:"Binance · USDT",yahoo:"Yahoo · USD"};
     var quoteTime=c.quoteTime?new Date(c.quoteTime*1000).toLocaleString():"";
     var freshness=c.marketError?"Unavailable":(!c.quoteTime?"Waiting for quote":(Date.now()/1000-c.quoteTime>1800?"Delayed · last quote":"Delayed quote"));
-    cl+='<div class="coin'+(c.active?' active':'')+'">'+
-      '<div class="asset-kind">'+(commodity?'Commodity · futures':'Crypto')+'</div><div class="top">'+
+    cl+='<div class="coin'+(c.active?' active':'')+'" data-id="'+esc(c.id)+'">'+
+      '<div class="tile-head"><div class="asset-kind">'+(commodity?'Commodity · futures':'Crypto')+'</div>'+
+      '<button class="tile-handle" aria-label="Move '+esc(c.name)+' tile" title="Drag to reorder; arrow keys also work">&#10303;</button></div><div class="top">'+
       '<div><span class="sym">'+esc(c.sym)+'</span><span class="name">'+esc(c.name)+'</span></div>'+
       '<div class="quote"><span class="val">'+(c.price>0?fmtUsd(c.price):"&mdash;")+'</span>'+
         '<span class="chg '+cls(c.chg24h)+'">'+(c.chg24h!=null?fmtPct(c.chg24h)+(commodity?" session":" 24h"):"")+'</span></div></div>'+
-      (commodity?commodityChart(c.candles,320,96,s.candleDays):chartWithAxis(c.candles,320,96,s.candleDays,c.price,c.candlesUpdated))+
+      (commodity?commodityChart(c.candles,320,chartHeight,s.candleDays):chartWithAxis(c.candles,320,chartHeight,s.candleDays,c.price,c.candlesUpdated))+
       '<div class="asset-meta"><span>'+esc(sourceName[c.source]||c.source||"Connecting")+(c.unit?' / '+esc(c.unit):'')+'</span>'+
       (commodity?'<span>'+esc(freshness)+(quoteTime?' · '+esc(quoteTime):'')+'</span>':'')+'</div>'+
       (c.contract?'<div class="muted" style="margin-top:6px">'+esc(c.contract)+'</div>':"")+
       (c.marketError?'<div class="muted" style="margin-top:6px">Market data unavailable: '+esc(c.marketError)+'</div>':"")+'</div>';
   }
+  var focused=document.activeElement && document.activeElement.closest(".tile-handle"), focusedID=focused&&focused.closest(".coin").getAttribute("data-id");
   $("cxList").innerHTML=cl;
+  if(focusedID){
+    var tiles=$("cxList").querySelectorAll(".coin");
+    for(var f=0;f<tiles.length;f++) if(tiles[f].getAttribute("data-id")===focusedID) tiles[f].querySelector(".tile-handle").focus();
+  }
 
   if(s.candleDays) $("cxTitle").innerHTML="Watchlist &middot; "+s.candleDays+"d";
   var d=s.updated?new Date(s.updated*1000):new Date();
@@ -819,12 +843,114 @@ $("assetType").onchange=function(){
 };
 $("modal").onclick=function(e){ if(e.target===this) closeSettings(); };
 
+/* Pointer events support both tablet touch and desktop dragging. */
+function tileIDs(){
+  return Array.prototype.map.call($("cxList").querySelectorAll(".coin"),function(el){return el.getAttribute("data-id");});
+}
+function moveTile(from,to){
+  var list=$("cxList"), tiles=Array.prototype.slice.call(list.querySelectorAll(".coin"));
+  var a=tiles.indexOf(from),b=tiles.indexOf(to);
+  if(a<0 || b<0 || a===b) return;
+  list.insertBefore(from,a<b?to.nextSibling:to);
+}
+function persistTileOrder(before){
+  var ids=tileIDs();
+  if(JSON.stringify(ids)===JSON.stringify(before)){ pullState(false); return; }
+  orderSaving=true; $("orderStatus").textContent="Saving order…";
+  api("/api/order",{method:"POST",json:true,body:JSON.stringify({ids:ids})},function(res){
+    orderSaving=false;
+    $("orderStatus").textContent=res&&res.ok?"Order saved":"Could not save order";
+    if(res&&res.status===401) showPin("");
+    pullState(false);
+    setTimeout(function(){ $("orderStatus").textContent=""; },4000);
+  });
+}
+(function(){
+  var list=$("cxList");
+  function scrollDrag(){
+    if(!tileDrag) return;
+    var scroller=list.scrollHeight>list.clientHeight?list:$("dashboard");
+    var bounds=scroller.getBoundingClientRect(),y=tileDrag.y,oldScroll=scroller.scrollTop;
+    if(y<bounds.top+45) scroller.scrollTop-=8;
+    else if(y>bounds.bottom-45) scroller.scrollTop+=8;
+    if(scroller.scrollTop!==oldScroll){
+      var hit=document.elementFromPoint(tileDrag.x,tileDrag.y),target=hit&&hit.closest(".coin");
+      if(target && target.parentNode===list) moveTile(tileDrag.tile,target);
+    }
+    tileDrag.frame=requestAnimationFrame(scrollDrag);
+  }
+  function begin(handle,id,x,y){
+    tileDrag={tile:handle.closest(".coin"),pointer:id,before:tileIDs(),x:x,y:y};
+    tileDrag.tile.classList.add("dragging"); list.classList.add("reordering");
+    tileDrag.frame=requestAnimationFrame(scrollDrag);
+  }
+  function move(x,y){
+    tileDrag.x=x; tileDrag.y=y;
+    var hit=document.elementFromPoint(x,y),target=hit&&hit.closest(".coin");
+    if(target && target.parentNode===list) moveTile(tileDrag.tile,target);
+  }
+  function finish(cancel){
+    if(!tileDrag) return;
+    var drag=tileDrag; tileDrag=null;
+    cancelAnimationFrame(drag.frame);
+    drag.tile.classList.remove("dragging"); list.classList.remove("reordering");
+    if(window.PointerEvent && list.hasPointerCapture(drag.pointer)) list.releasePointerCapture(drag.pointer);
+    if(cancel){ pullState(false); return; }
+    persistTileOrder(drag.before);
+  }
+  if(window.PointerEvent){
+    list.onpointerdown=function(e){
+      var handle=e.target.closest(".tile-handle");
+      if(!handle || orderSaving || tileDrag || !e.isPrimary || e.button!==0) return;
+      e.preventDefault(); begin(handle,e.pointerId,e.clientX,e.clientY);
+      list.setPointerCapture(e.pointerId);
+    };
+    list.onpointermove=function(e){
+      if(tileDrag && e.pointerId===tileDrag.pointer) move(e.clientX,e.clientY);
+    };
+    list.onpointerup=function(e){if(tileDrag && e.pointerId===tileDrag.pointer) finish(false);};
+    list.onpointercancel=function(e){if(tileDrag && e.pointerId===tileDrag.pointer) finish(true);};
+    list.onlostpointercapture=function(e){if(tileDrag && e.pointerId===tileDrag.pointer) finish(true);};
+  } else {
+    // iOS 10 Safari has no Pointer Events or touch-action support.
+    list.addEventListener("touchstart",function(e){
+      var handle=e.target.closest(".tile-handle");
+      if(!handle || orderSaving || tileDrag || e.touches.length!==1) return;
+      e.preventDefault();
+      var touch=e.touches[0]; begin(handle,touch.identifier,touch.clientX,touch.clientY);
+    },{passive:false});
+    list.addEventListener("touchmove",function(e){
+      if(!tileDrag) return;
+      e.preventDefault();
+      for(var i=0;i<e.touches.length;i++) if(e.touches[i].identifier===tileDrag.pointer) move(e.touches[i].clientX,e.touches[i].clientY);
+    },{passive:false});
+    list.addEventListener("touchend",function(e){
+      if(!tileDrag) return;
+      for(var i=0;i<e.changedTouches.length;i++) if(e.changedTouches[i].identifier===tileDrag.pointer){ e.preventDefault(); finish(false); break; }
+    },{passive:false});
+    list.addEventListener("touchcancel",function(){finish(true);},false);
+  }
+  list.onkeydown=function(e){
+    var handle=e.target.closest(".tile-handle");
+    if(!handle || orderSaving || tileDrag) return;
+    var columns=getComputedStyle(list).gridTemplateColumns.split(" ").length;
+    var steps={ArrowLeft:-1,ArrowRight:1,ArrowUp:-columns,ArrowDown:columns};
+    if(steps[e.key]==null) return;
+    e.preventDefault();
+    var tiles=Array.prototype.slice.call(list.querySelectorAll(".coin")),from=handle.closest(".coin");
+    var target=tiles[tiles.indexOf(from)+steps[e.key]];
+    if(!target) return;
+    var before=tileIDs(); moveTile(from,target); handle.focus(); persistTileOrder(before);
+  };
+})();
+
 /* ---------- pull-to-refresh (drag a column down at the top to reload) ---------- */
 (function(){
   var TH=80, startY=null, pulling=false, hint=$("pullHint");
   function bind(el){
     if(!el) return;
     el.addEventListener("touchstart", function(e){
+      if(e.target.closest(".tile-handle")){ pulling=false; startY=null; return; }
       pulling = el.scrollTop<=0;
       startY = pulling ? e.touches[0].clientY : null;
     }, false);

@@ -209,9 +209,21 @@ func activeCoins(positions []Position, coins []Coin) map[string]bool {
 	return active
 }
 
-func saveConfig(c Config) {
-	b, _ := json.MarshalIndent(c, "", "  ")
-	os.WriteFile(configPath, b, 0644)
+func saveConfig(c Config) error {
+	b, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	// Callers serialize runtime writes under mu; replace atomically.
+	if err := os.WriteFile(configPath+".tmp", b, 0644); err != nil {
+		os.Remove(configPath + ".tmp")
+		return err
+	}
+	if err := os.Rename(configPath+".tmp", configPath); err != nil {
+		os.Remove(configPath + ".tmp")
+		return err
+	}
+	return nil
 }
 
 /* ------------------------- state ------------------------- */
@@ -1182,7 +1194,7 @@ func refreshFast() {
 		marketPrice[id] = price
 	}
 	coinStates := make([]CoinState, 0, len(c.Coins))
-	for _, cn := range sortedCoins(c.Coins, c.Sort, active) {
+	for _, cn := range sortedCoins(cfg.Coins, cfg.Sort, active) {
 		p := marketPrice[cn.ID]
 		coinState := CoinState{
 			Sym: cn.Sym, Name: cn.Name, ID: cn.ID,
@@ -1392,8 +1404,12 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		candleUpdated = map[string]int64{}
 		marketPrice = map[string]float64{}
 		commodityQuotes = map[string]commodityQuote{}
+		saveErr := saveConfig(saved)
 		mu.Unlock()
-		saveConfig(saved)
+		if saveErr != nil {
+			http.Error(w, "could not save config", 500)
+			return
+		}
 		select {
 		case trigger <- struct{}{}:
 		default:
@@ -1404,6 +1420,61 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	mu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(b)
+}
+
+// Order-only writes preserve market caches and all other settings.
+func handleOrder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method", 405)
+		return
+	}
+	var request struct {
+		IDs []string `json:"ids"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&request) != nil {
+		http.Error(w, "bad json", 400)
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(request.IDs) != len(cfg.Coins) {
+		http.Error(w, "watchlist changed", 409)
+		return
+	}
+	byID := map[string]Coin{}
+	for _, coin := range cfg.Coins {
+		byID[coin.ID] = coin
+	}
+	ordered := make([]Coin, 0, len(request.IDs))
+	for _, id := range request.IDs {
+		coin, ok := byID[id]
+		if !ok {
+			http.Error(w, "invalid asset order", 400)
+			return
+		}
+		ordered = append(ordered, coin)
+		delete(byID, id)
+	}
+	saved := cfg
+	saved.Coins = ordered
+	saved.Sort = "config"
+	if err := saveConfig(saved); err != nil {
+		http.Error(w, "could not save order", 500)
+		return
+	}
+	cfg = saved
+	byState := map[string]CoinState{}
+	for _, coin := range state.Coins {
+		byState[coin.ID] = coin
+	}
+	state.Coins = make([]CoinState, 0, len(byState))
+	for _, id := range request.IDs {
+		if coin, ok := byState[id]; ok {
+			state.Coins = append(state.Coins, coin)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"saved":true}`))
 }
 
 // proxy CoinGecko search so the browser never calls out directly
@@ -1472,6 +1543,7 @@ func main() {
 	mux.HandleFunc("/api/auth/refresh", handleAuthRefresh)
 	mux.HandleFunc("/api/state", requireAccess(handleState))
 	mux.HandleFunc("/api/config", requireAccess(handleConfig))
+	mux.HandleFunc("/api/order", requireAccess(handleOrder))
 	mux.HandleFunc("/api/search", requireAccess(handleSearch))
 
 	mux.Handle("/", staticHandler())

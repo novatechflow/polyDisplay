@@ -12,5 +12,6 @@
 *.log.*
 # live kiosk state (wallet, local watchlist). never commit.
 /config.json
+/config.json.tmp
 # local env (copy from .env.example); POLYDISPLAY_ASSETS lives here
 /.env

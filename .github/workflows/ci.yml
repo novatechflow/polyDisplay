@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 24
-      - run: node --test tests/chart.test.cjs
+      - run: node --test tests/*.test.cjs
       - name: gofmt
         run: test -z "$(gofmt -l .)"
       - run: go vet ./...
