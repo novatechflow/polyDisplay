@@ -12,6 +12,12 @@ Add a Polymarket public address in Settings to show positions, P/L and activity
 on the left and your watchlist on the right. On phones the panels stack.
 Clear the address to return to the full-width watchlist.
 
+The browser polls every 20 seconds to match the server's price cadence. Quote
+updates reuse tile and candle elements, moving only the live price marker;
+charts rebuild for new candles, period boundaries, stale data or price breakouts.
+Polling and the minute clock stop when the page is hidden. Drag auto-scroll runs
+only at a scrollable edge, and interrupted drags cancel automatically.
+
 Tiles use compact spacing on tablets, with two columns in portrait mode. Drag a tile by its grip in the upper-right
 corner to move it; the new custom order saves automatically on the server and
 survives reloads. Scrolling elsewhere on a tile works normally. You can also

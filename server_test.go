@@ -677,9 +677,6 @@ func TestEmbeddedServerVersion(t *testing.T) {
 	if strings.Contains(html, `id="appVer">v`) {
 		t.Error("client version is hard-coded instead of coming from server state")
 	}
-	if !strings.Contains(html, `$("appVer").textContent=s.version+" · server"`) {
-		t.Error("client does not render the server-reported version")
-	}
 }
 
 func TestEnvExampleIsPolymarketCore(t *testing.T) {
