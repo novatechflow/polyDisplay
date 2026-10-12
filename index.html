@@ -186,7 +186,7 @@
     <div class="brand">poly<span>Display</span></div>
     <div class="right">
       <div class="status">
-        <div id="clock">--:--:--</div>
+        <div id="clock">--:--</div>
         <div>Server <span id="srvDot" class="dot"></span></div>
       </div>
       <button class="gear" id="gearBtn" title="Settings">&#9881;</button>
@@ -260,9 +260,11 @@
 <script>
 /* the page is served BY the Go server, so the API is same-origin */
 var API = "";                 // e.g. set to "http://192.168.4.201:8080" to point elsewhere
-var POLL = 10000;             // how often the page asks the server for fresh state
+var POLL = 20000;             // how often the page asks the server for fresh state
 
 function $(id){ return document.getElementById(id); }
+function setText(el,value){ if(el.textContent!==value) el.textContent=value; }
+function setHTML(el,value){ if(el._html!==value){el.innerHTML=value;el._html=value;} }
 function p2(x){ return (x<10?"0":"")+x; }
 function fmtUsd(n){ if(n==null||isNaN(n))return "-"; var a=Math.abs(n),dp=a>=1000?0:a>=1?2:a>=0.01?4:6;
   return "$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:dp,maximumFractionDigits:dp}); }
@@ -272,8 +274,8 @@ function fmtSignedUsd2(n){ if(n==null||isNaN(n))return "-"; return (n>=0?"+":"-"
 function fmtPct(n){ if(n==null||isNaN(n))return ""; return (n>=0?"+":"")+Number(n).toFixed(2)+"%"; }
 function cls(n){ return n>0?"up":n<0?"down":"flat"; }
 function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
-function setDot(id,ok){ $(id).className="dot "+(ok?"ok":"err"); }
-function showErr(msg){ var b=$("errBanner"); if(msg){ b.textContent=msg; b.className="err-banner show"; } else { b.className="err-banner"; } }
+function setDot(id,ok){ var el=$(id),value="dot "+(ok?"ok":"err");if(el.className!==value)el.className=value; }
+function showErr(msg){ var b=$("errBanner"),value=msg?"err-banner show":"err-banner";setText(b,msg||"");if(b.className!==value)b.className=value; }
 
 var MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function fmtResolution(endStr){
@@ -344,8 +346,11 @@ function fmtResolution(endStr){
   return timeStr + " (" + relStr + ")";
 }
 
-function tick(){ var d=new Date(); $("clock").textContent=p2(d.getHours())+":"+p2(d.getMinutes())+":"+p2(d.getSeconds()); }
-setInterval(tick,1000); tick();
+function tick(){ var d=new Date(); setText($("clock"),p2(d.getHours())+":"+p2(d.getMinutes())); }
+var clockTimer=null, pollTimer=null, stateInFlight=false, stateAgain=false, pageSuspended=false;
+function pageActive(){ return !document.hidden && !pageSuspended; }
+function startClock(){ clearTimeout(clockTimer); clockTimer=null; if(pageActive()){tick();clockTimer=setTimeout(startClock,60000-Date.now()%60000);} }
+startClock();
 
 /* shared geometry for a candle series plus the live spot overlay */
 function chartMetrics(data,spot){
@@ -474,7 +479,7 @@ function candleChart(data,w,h,m,structure){
   s+=extremeTick(chartX(m,m.iHi,w),Y(m.hi),tw);
   s+=extremeTick(chartX(m,m.iLo,w),Y(m.lo),tw);
   var yl=Y(m.spot);
-  s+='<line x1="0" y1="'+yl.toFixed(1)+'" x2="'+w+'" y2="'+yl.toFixed(1)+'" stroke="var(--accent)" stroke-width="0.8" stroke-dasharray="4,3" opacity="0.8"/>';
+  s+='<line class="spot-line" x1="0" y1="'+yl.toFixed(1)+'" x2="'+w+'" y2="'+yl.toFixed(1)+'" stroke="var(--accent)" stroke-width="0.8" stroke-dasharray="4,3" opacity="0.8"/>';
   return s+'</svg>';
 }
 /* rect, not circle - preserveAspectRatio="none" would stretch it to an ellipse */
@@ -637,19 +642,36 @@ function submitPin(){
 }
 
 /* ---------- poll the server ---------- */
+function schedulePoll(){
+  clearTimeout(pollTimer); pollTimer=null;
+  if(pageActive()) pollTimer=setTimeout(function(){pullState(true);},POLL);
+}
 function pullState(thenPoll){
+  if(!pageActive()) return;
+  if(stateInFlight){if(!thenPoll) stateAgain=true;return;}
+  clearTimeout(pollTimer);pollTimer=null;stateInFlight=true;
+  function done(){
+    stateInFlight=false;
+    if(stateAgain){stateAgain=false;pullState(false);} else schedulePoll();
+  }
   api("/api/state", {}, function(res){
-    if(!res){ setDot("srvDot",false); showErr("Server unreachable"); }
-    else if(res.status===401){ setDot("srvDot",true); showErr(""); }
-    else if(!res.ok){ setDot("srvDot",false); showErr("HTTP "+res.status); }
-    else {
-      res.json().then(function(s){ setDot("srvDot",true); showErr(s.note||""); render(s); })
-        .catch(function(){ setDot("srvDot",false); showErr("Bad state"); });
-    }
-    if(thenPoll) setTimeout(function(){ pullState(true); }, POLL);
+    if(!pageActive()){done();return;}
+    if(!res){setDot("srvDot",false);showErr("Server unreachable");done();}
+    else if(res.status===401){setDot("srvDot",true);showErr("");done();}
+    else if(!res.ok){setDot("srvDot",false);showErr("HTTP "+res.status);done();}
+    else res.json().then(function(s){
+      if(pageActive()){setDot("srvDot",true);showErr(s.note||"");render(s);}
+      done();
+    }).catch(function(){if(pageActive()){setDot("srvDot",false);showErr("Bad state");}done();});
   });
 }
-function loadState(){ pullState(true); }
+function loadState(){pullState(true);}
+function pausePage(){clearTimeout(pollTimer);pollTimer=null;clearTimeout(clockTimer);clockTimer=null;}
+document.addEventListener("visibilitychange",function(){
+  if(pageActive()){startClock();pullState(false);}else pausePage();
+});
+window.addEventListener("pagehide",function(){pageSuspended=true;pausePage();});
+window.addEventListener("pageshow",function(){pageSuspended=false;startClock();pullState(false);});
 
 /* P/L line over the last 30 days, with the break-even line where it fits */
 function pnlSpark(series,w,h){
@@ -681,16 +703,16 @@ function pnlHtml(p){
     "</div></div>";
 }
 
-var tileDrag=null, orderSaving=false;
+var tileDrag=null, orderSaving=false, tileEntries={};
 function render(s){
   if(tileDrag || orderSaving) return;
-  $("dashboard").className=(s.wallet||"").trim()?"":"assets-only";
-  if(s.version) $("appVer").textContent=s.version+" · server";
+  var layout=(s.wallet||"").trim()?"":"assets-only";if($("dashboard").className!==layout)$("dashboard").className=layout;
+  if(s.version) setText($("appVer"),s.version+" · server");
   var rows=s.positions||[], html="";
   if(!(s.wallet||"").trim()){
     html='<div class="empty">No Polymarket wallet.<br>Tap &#9881;, paste an address (0x&hellip;), then Save.</div>';
-    $("pmSummary").innerHTML="&mdash;";
-  } else if(!rows.length){ html='<div class="empty">No open positions.</div>'; $("pmSummary").innerHTML="&mdash;"; }
+    setHTML($("pmSummary"),"&mdash;");
+  } else if(!rows.length){ html='<div class="empty">No open positions.</div>'; setHTML($("pmSummary"),"&mdash;"); }
   else {
     var totalVal=0,totalPnl=0;
     for(var i=0;i<rows.length;i++){
@@ -712,41 +734,72 @@ function render(s){
         timeToResRow+
         '<div class="row" style="margin-top:4px"><span class="meta">value</span><span>'+fmtUsd(+p.currentValue)+'</span></div></div>';
     }
-    $("pmSummary").innerHTML=fmtUsd(totalVal)+' <span class="'+cls(totalPnl)+'">'+fmtSignedUsd(totalPnl)+'</span>';
+    setHTML($("pmSummary"),fmtUsd(totalVal)+' <span class="'+cls(totalPnl)+'">'+fmtSignedUsd(totalPnl)+'</span>');
   }
   if((s.wallet||"").trim()){ html = pnlHtml(s.pnl) + html + activityHtml(s.activity||[]); }
-  $("pmList").innerHTML=html;
+  setHTML($("pmList"),html);
 
-  var coins=s.coins||[], cl="", chartHeight=window.matchMedia("(min-width:651px) and (max-width:1200px)").matches?76:84;
-  if(!coins.length){ cl='<div class="empty">'+(s.loading?"Refreshing watchlist&hellip;":"No assets. Tap &#9881; to add.")+'</div>'; }
-  for(var k=0;k<coins.length;k++){
-    var c=coins[k];
-    var commodity=c.kind==="commodity";
-    var sourceName={kraken:"Kraken · USD",coinbase:"Coinbase · USD",binance:"Binance · USDT",yahoo:"Yahoo · USD"};
-    var quoteTime=c.quoteTime?new Date(c.quoteTime*1000).toLocaleString():"";
-    var freshness=c.marketError?"Unavailable":(!c.quoteTime?"Waiting for quote":(Date.now()/1000-c.quoteTime>1800?"Delayed · last quote":"Delayed quote"));
-    cl+='<div class="coin'+(c.active?' active':'')+'" data-id="'+esc(c.id)+'">'+
-      '<div class="tile-head"><div class="asset-kind">'+(commodity?'Commodity · futures':'Crypto')+'</div>'+
-      '<button class="tile-handle" aria-label="Move '+esc(c.name)+' tile" title="Drag to reorder; arrow keys also work">&#10303;</button></div><div class="top">'+
-      '<div><span class="sym">'+esc(c.sym)+'</span><span class="name">'+esc(c.name)+'</span></div>'+
-      '<div class="quote"><span class="val">'+(c.price>0?fmtUsd(c.price):"&mdash;")+'</span>'+
-        '<span class="chg '+cls(c.chg24h)+'">'+(c.chg24h!=null?fmtPct(c.chg24h)+(commodity?" session":" 24h"):"")+'</span></div></div>'+
-      (commodity?commodityChart(c.candles,320,chartHeight,s.candleDays):chartWithAxis(c.candles,320,chartHeight,s.candleDays,c.price,c.candlesUpdated))+
-      '<div class="asset-meta"><span>'+esc(sourceName[c.source]||c.source||"Connecting")+(c.unit?' / '+esc(c.unit):'')+'</span>'+
-      (commodity?'<span>'+esc(freshness)+(quoteTime?' · '+esc(quoteTime):'')+'</span>':'')+'</div>'+
-      (c.contract?'<div class="muted" style="margin-top:6px">'+esc(c.contract)+'</div>':"")+
-      (c.marketError?'<div class="muted" style="margin-top:6px">Market data unavailable: '+esc(c.marketError)+'</div>':"")+'</div>';
-  }
-  var focused=document.activeElement && document.activeElement.closest(".tile-handle"), focusedID=focused&&focused.closest(".coin").getAttribute("data-id");
-  $("cxList").innerHTML=cl;
-  if(focusedID){
-    var tiles=$("cxList").querySelectorAll(".coin");
-    for(var f=0;f<tiles.length;f++) if(tiles[f].getAttribute("data-id")===focusedID) tiles[f].querySelector(".tile-handle").focus();
-  }
+  renderTiles(s);
 
-  if(s.candleDays) $("cxTitle").innerHTML="Watchlist &middot; "+s.candleDays+"d";
+  if(s.candleDays) setText($("cxTitle"),"Watchlist · "+s.candleDays+"d");
   var d=s.updated?new Date(s.updated*1000):new Date();
-  $("cxUpdated").textContent="upd "+p2(d.getHours())+":"+p2(d.getMinutes())+":"+p2(d.getSeconds());
+  setText($("cxUpdated"),"upd "+p2(d.getHours())+":"+p2(d.getMinutes())+":"+p2(d.getSeconds()));
+}
+
+/* Keep candle SVGs mounted during quote updates; only the spot line moves. */
+function tileChartKey(c,days,height,now){
+  var data=c.candles||[],interval=days===1?900000:days===7?3600000:14400000;
+  return [c.kind,c.candlesUpdated,days,height,data.length,data.length?data[data.length-1][0]:0,
+    Math.floor(now/interval),!!(c.candlesUpdated && now-c.candlesUpdated>900000)].join("|");
+}
+function renderTiles(s){
+  var list=$("cxList"),coins=s.coins||[],keep={},height=window.matchMedia("(min-width:651px) and (max-width:1200px)").matches?76:84;
+  if(!coins.length){list._tilesReady=false;setHTML(list,'<div class="empty">'+(s.loading?"Refreshing watchlist&hellip;":"No assets. Tap &#9881; to add.")+'</div>');tileEntries={};return;}
+  if(!list._tilesReady || list._html!=null){list.innerHTML="";delete list._html;list._tilesReady=true;}
+  for(var k=0;k<coins.length;k++){
+    var c=coins[k],commodity=c.kind==="commodity",entry=tileEntries[c.id],identity=[c.sym,c.name,c.kind,c.unit].join("|");
+    keep[c.id]=true;
+    if(!entry || entry.identity!==identity){
+      if(entry && entry.el.parentNode===list) list.removeChild(entry.el);
+      var el=document.createElement("div");el.setAttribute("data-id",c.id);
+      el.innerHTML='<div class="tile-head"><div class="asset-kind">'+(commodity?'Commodity · futures':'Crypto')+'</div>'+
+        '<button class="tile-handle" aria-label="Move '+esc(c.name)+' tile" title="Drag to reorder; arrow keys also work">&#10303;</button></div>'+
+        '<div class="top"><div><span class="sym">'+esc(c.sym)+'</span><span class="name">'+esc(c.name)+'</span></div>'+
+        '<div class="quote"><span class="val"></span><span class="chg"></span></div></div><div class="tile-chart"></div>'+
+        '<div class="asset-meta"><span class="tile-source"></span><span class="tile-freshness"></span></div>'+
+        '<div class="muted tile-contract" style="margin-top:6px"></div><div class="muted tile-error" style="margin-top:6px"></div>';
+      entry=tileEntries[c.id]={el:el,identity:identity};
+    }
+    var tile=entry.el;
+    if(list.children[k]!==tile) list.insertBefore(tile,list.children[k]||null);
+    var tileClass="coin"+(c.active?" active":"");if(tile.className!==tileClass)tile.className=tileClass;
+    setText(tile.querySelector(".val"),c.price>0?fmtUsd(c.price):"—");
+    var change=tile.querySelector(".chg"),changeClass="chg "+cls(c.chg24h);
+    if(change.className!==changeClass)change.className=changeClass;
+    setText(change,c.chg24h!=null?fmtPct(c.chg24h)+(commodity?" session":" 24h"):"");
+    var sourceName={kraken:"Kraken · USD",coinbase:"Coinbase · USD",binance:"Binance · USDT",yahoo:"Yahoo · USD"};
+    setText(tile.querySelector(".tile-source"),(sourceName[c.source]||c.source||"Connecting")+(c.unit?" / "+c.unit:""));
+    var freshness=c.marketError?"Unavailable":(!c.quoteTime?"Waiting for quote":(Date.now()/1000-c.quoteTime>1800?"Delayed · last quote":"Delayed quote"));
+    setText(tile.querySelector(".tile-freshness"),commodity?freshness+(c.quoteTime?" · "+new Date(c.quoteTime*1000).toLocaleString():""):"");
+    var contract=tile.querySelector(".tile-contract"),error=tile.querySelector(".tile-error");
+    setText(contract,c.contract||"");contract.style.display=c.contract?"":"none";
+    setText(error,c.marketError?"Market data unavailable: "+c.marketError:"");error.style.display=c.marketError?"":"none";
+    var key=tileChartKey(c,s.candleDays,height,Date.now()),m=entry.metrics;
+    var breakout=!commodity && m && c.price>0 && (c.price<m.plotLo || c.price>m.plotLo+m.plotRange);
+    if(entry.chartKey!==key || breakout){
+      tile.querySelector(".tile-chart").innerHTML=commodity?commodityChart(c.candles,320,height,s.candleDays):chartWithAxis(c.candles,320,height,s.candleDays,c.price,c.candlesUpdated);
+      entry.chartKey=key;entry.metrics=!commodity && c.candles && c.candles.length>1?chartMetrics(c.candles,c.price):null;
+      entry.price=null;
+    }
+    m=entry.metrics;
+    if(m && c.price>0 && entry.price!==c.price){
+      var y=chartY(m,c.price,height),line=tile.querySelector(".spot-line"),label=tile.querySelector(".ylast");
+      if(line){line.setAttribute("y1",y.toFixed(1));line.setAttribute("y2",y.toFixed(1));}
+      if(label){setText(label,fmtUsd(c.price));label.style.top=Math.max(0,Math.min(height-11,y-6)).toFixed(0)+"px";}
+      entry.price=c.price;
+    }
+  }
+  for(var id in tileEntries) if(!keep[id]){var old=tileEntries[id].el;if(old.parentNode===list)list.removeChild(old);delete tileEntries[id];}
 }
 
 /* ---------- settings (server config) ---------- */
@@ -869,30 +922,36 @@ function persistTileOrder(before){
   var list=$("cxList");
   function scrollDrag(){
     if(!tileDrag) return;
+    clearTimeout(tileDrag.frame);tileDrag.frame=null;
     var scroller=list.scrollHeight>list.clientHeight?list:$("dashboard");
     var bounds=scroller.getBoundingClientRect(),y=tileDrag.y,oldScroll=scroller.scrollTop;
-    if(y<bounds.top+45) scroller.scrollTop-=8;
-    else if(y>bounds.bottom-45) scroller.scrollTop+=8;
-    if(scroller.scrollTop!==oldScroll){
-      var hit=document.elementFromPoint(tileDrag.x,tileDrag.y),target=hit&&hit.closest(".coin");
-      if(target && target.parentNode===list) moveTile(tileDrag.tile,target);
-    }
-    tileDrag.frame=requestAnimationFrame(scrollDrag);
+    var direction=y<bounds.top+45?-1:y>bounds.bottom-45?1:0;
+    if(!direction) return;
+    scroller.scrollTop=Math.max(0,Math.min(scroller.scrollHeight-scroller.clientHeight,oldScroll+direction*8));
+    if(scroller.scrollTop===oldScroll) return;
+    var hit=document.elementFromPoint(tileDrag.x,tileDrag.y),target=hit&&hit.closest(".coin");
+    if(target && target.parentNode===list) moveTile(tileDrag.tile,target);
+    tileDrag.frame=setTimeout(scrollDrag,100);
+  }
+  function armDragTimeout(){
+    clearTimeout(tileDrag.watchdog);
+    tileDrag.watchdog=setTimeout(function(){finish(true);},10000);
   }
   function begin(handle,id,x,y){
     tileDrag={tile:handle.closest(".coin"),pointer:id,before:tileIDs(),x:x,y:y};
     tileDrag.tile.classList.add("dragging"); list.classList.add("reordering");
-    tileDrag.frame=requestAnimationFrame(scrollDrag);
+    armDragTimeout();
   }
   function move(x,y){
-    tileDrag.x=x; tileDrag.y=y;
+    tileDrag.x=x; tileDrag.y=y;armDragTimeout();
     var hit=document.elementFromPoint(x,y),target=hit&&hit.closest(".coin");
     if(target && target.parentNode===list) moveTile(tileDrag.tile,target);
+    scrollDrag();
   }
   function finish(cancel){
     if(!tileDrag) return;
     var drag=tileDrag; tileDrag=null;
-    cancelAnimationFrame(drag.frame);
+    clearTimeout(drag.frame);clearTimeout(drag.watchdog);
     drag.tile.classList.remove("dragging"); list.classList.remove("reordering");
     if(window.PointerEvent && list.hasPointerCapture(drag.pointer)) list.releasePointerCapture(drag.pointer);
     if(cancel){ pullState(false); return; }
@@ -930,6 +989,9 @@ function persistTileOrder(before){
     },{passive:false});
     list.addEventListener("touchcancel",function(){finish(true);},false);
   }
+  window.addEventListener("blur",function(){finish(true);});
+  window.addEventListener("pagehide",function(){finish(true);});
+  document.addEventListener("visibilitychange",function(){if(document.hidden)finish(true);});
   list.onkeydown=function(e){
     var handle=e.target.closest(".tile-handle");
     if(!handle || orderSaving || tileDrag) return;
